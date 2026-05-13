@@ -1,0 +1,104 @@
+name: Conda End-to-end Test
+
+env:
+  SANITIZER_CI_SCHEDULE: '25 6 * * 5'
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - "docs/**"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - "docs/**"
+  workflow_dispatch:
+  schedule:
+    # Run conda CI on Monday and Thursday at 1:25am EST (06:25 UTC)
+    - cron: '25 6 * * 1,4,5'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  checks: write
+
+jobs:
+    build:
+      strategy:
+        matrix:
+          os:
+            - ubuntu-24.04
+            - macos-14
+            - windows-2022
+      runs-on: ${{ matrix.os }}
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v6
+
+        - uses: mamba-org/setup-micromamba@v3
+          with:
+            micromamba-version: '2.3.2-0'
+            environment-file: conda/dev-environment-unix.yml
+            init-shell: >-
+              bash
+            cache-environment: true
+            cache-downloads: true
+            post-cleanup: 'all'
+          if: ${{ runner.os != 'Windows' }}
+
+        - uses: mamba-org/setup-micromamba@v3
+          with:
+            micromamba-version: '2.3.2-0'
+            environment-file: conda/dev-environment-win.yml
+            init-shell: >-
+              cmd.exe
+            cache-environment: true
+            cache-downloads: true
+            post-cleanup: 'all'
+          if: ${{ runner.os == 'Windows' }}
+
+        - name: Python Lint Steps
+          run: make lint
+          shell: micromamba-shell {0}
+          if: ${{ runner.os != 'Windows' }}
+
+        - name: Python Lint Steps (Windows)
+          run: make lint
+          shell: cmd /C call {0}
+          if: ${{ runner.os == 'Windows' }}
+
+        - name: Python Build Steps (Linux)
+          run: make build
+          shell: micromamba-shell {0}
+          if: ${{ runner.os == 'Linux' }}
+
+        - name: Python Build Steps (macOS)
+          run: make build
+          shell: micromamba-shell {0}
+          if: ${{ runner.os == 'macOS' }}
+
+        - name: Python Build Steps (Windows)
+          run: make build
+          shell: cmd /C call {0}
+          if: ${{ runner.os == 'Windows' }}
+
+        - name: Python Test Steps
+          run: make test
+          shell: micromamba-shell {0}
+          if: ${{ runner.os != 'Windows' }}
+
+        - name: Python Test Steps (Windows)
+          run: make test
+          shell: cmd /C call {0}
+          if: ${{ runner.os == 'Windows' }}

@@ -1,0 +1,25 @@
+name: numba-cfunc-compiler
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+ - bump-my-version
+ - clang-format
+ - cmake
+ - codespell>=2.4,<2.5
+ - compilers
+ - csp  # we will want to run some integration tests
+ - hatchling
+ - hatch-cpp
+ - llvmlite>=0.46
+ - mamba
+ - numba>=0.64
+ - pytest
+ - pytest-asyncio
+ - pytest-cov
+ - pytest-sugar
+ - python>=3.10,<3.14
+ - python-build
+ - ruff
+ - twine
+ - wheel

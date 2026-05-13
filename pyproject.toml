@@ -1,0 +1,169 @@
+[build-system]
+requires = [
+    "hatchling",
+    "hatch-cpp",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "numba-cfunc-compiler"
+authors = [
+    {name = "Point72, L.P.", email = "CSPOpenSource@point72.com"},
+]
+description = "Generic, framework-agnostic infrastructure for compiling Python functions to Numba @cfunc via AST transformation"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+version = "0.1.0"
+requires-python = ">=3.10"
+keywords = []
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+dependencies = [
+    "llvmlite>=0.46",
+    "numba>=0.64",
+]
+
+[project.optional-dependencies]
+develop = [
+    "build",
+    "bump-my-version",
+    "check-dist",
+    "cibuildwheel",
+    "codespell",
+    "hatch-cpp",
+    "hatchling",
+    "mdformat",
+    "mdformat-tables>=1",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "twine",
+    "ty",
+    "uv",
+    "wheel",
+]
+
+[project.scripts]
+
+[project.urls]
+Repository = "https://github.com/Point72/numba-cfunc-compiler"
+Homepage = "https://github.com/Point72/numba-cfunc-compiler"
+
+[tool.bumpversion]
+current_version = "0.1.0"
+commit = true
+tag = true
+commit_args = "-s"
+
+[[tool.bumpversion.files]]
+filename = "numba_cfunc_compiler/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[tool.cibuildwheel]
+build = "cp310-*"
+test-command = "echo 'TODO'"
+test-extras = "develop"
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+skip = "*i686 musllinux*"
+
+[tool.cibuildwheel.macos]
+environment = {MACOSX_DEPLOYMENT_TARGET="11.0"}
+archs = "arm64"
+
+[tool.cibuildwheel.windows]
+archs = "AMD64"
+skip = "*win32 *arm_64"
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
+ignore_errors = true
+fail_under = 45
+
+[tool.hatch.build]
+artifacts = [
+    "numba_cfunc_compiler/numba_rt/*.dll",
+    "numba_cfunc_compiler/numba_rt/*.dylib",
+    "numba_cfunc_compiler/numba_rt/*.so",
+]
+
+[tool.hatch.build.sources]
+src = "/"
+
+[tool.hatch.build.hooks.hatch-cpp]
+verbose = true
+libraries = [
+    {name = "numba_cfunc_compiler/numba_rt/_py_nrt_init", sources = [ "numba_cfunc_compiler/numba_rt/nrt_init_py.cpp", "numba_cfunc_compiler/numba_rt/cext/dictobject.c", "numba_cfunc_compiler/numba_rt/cext/listobject.c" ], language = "c", include_dirs = [ "numba_cfunc_compiler/numba_rt", "numba_cfunc_compiler/numba_rt/cext" ], py-limited-api = "cp310" }
+]
+
+[tool.hatch.build.targets.sdist]
+packages = [
+    "numba_cfunc_compiler",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "numba_cfunc_compiler",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-vvv",
+    "--junitxml=junit.xml",
+]
+testpaths = "numba_cfunc_compiler/tests"
+
+[tool.ruff]
+line-length = 150
+
+[tool.ruff.lint]
+extend-select = [
+    "I",
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+default-section = "third-party"
+known-first-party = [
+    "numba_cfunc_compiler",
+]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",
+    "F403",
+]
+
