@@ -13,7 +13,7 @@ authors = [
 description = "Generic, framework-agnostic infrastructure for compiling Python functions to Numba @cfunc via AST transformation"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-version = "0.1.0"
+version = "0.0.1"
 requires-python = ">=3.10"
 keywords = []
 
@@ -62,7 +62,7 @@ Repository = "https://github.com/Point72/numba-cfunc-compiler"
 Homepage = "https://github.com/Point72/numba-cfunc-compiler"
 
 [tool.bumpversion]
-current_version = "0.1.0"
+current_version = "0.0.1"
 commit = true
 tag = true
 commit_args = "-s"
