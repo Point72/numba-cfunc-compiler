@@ -3,9 +3,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
+      interval: "monthly"
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
