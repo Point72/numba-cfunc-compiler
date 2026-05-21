@@ -32,7 +32,7 @@ classifiers = [
 
 dependencies = [
     "llvmlite>=0.46",
-    "numba>=0.64",
+    "numba>=0.65.1",
 ]
 
 [project.optional-dependencies]
