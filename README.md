@@ -16,14 +16,6 @@ A compilation framework that transforms Python functions into native C-callable 
 - **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering 
 - **Plugin architecture** — all domain-specific behavior (input handlers, output handlers, AST transforms, type inference) is injected through registration APIs
 
-```python
-@numba_node
-def ema(x: Signal[float], alpha: float) -> Signal[float]:
-    s: State[float] = 0.0                    # persistent state, initialized once
-    s = alpha * x + (1.0 - alpha) * s        # natural Python syntax
-    return s                                  # compiled to native code
-```
-
 The distribution is published as `numba-cfunc-compiler` and imported in Python as `numba_cfunc_compiler`.
 
 ## Installation

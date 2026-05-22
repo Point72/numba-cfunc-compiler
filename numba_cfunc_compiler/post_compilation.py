@@ -1,3 +1,4 @@
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -7,6 +8,8 @@ __all__ = [
     "apply_post_compilation",
     "link_ffi_bitcode",
 ]
+
+log = logging.getLogger("numba_cfunc_compiler")
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,6 @@ def link_ffi_bitcode(module: Any, bitcode: bytes) -> Any:
         module.verify()
 
     except Exception as e:
-        print(f"Failed to link FFI bitcode for inlining (falling back to external calls): {e}")
+        log.warning(f"Failed to link FFI bitcode for inlining (falling back to external calls): {e}")
 
     return module
