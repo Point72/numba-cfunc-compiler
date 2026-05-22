@@ -1,6 +1,6 @@
 # numba cfunc compiler
 
-Generic, framework-agnostic infrastructure for compiling Python functions to Numba @cfunc via AST transformation
+Extensible compiler for producing native C-callable functions from Python source with stateful variables, typed containers, and pluggable type systems built on Numba @cfunc
 
 [![Build Status](https://github.com/Point72/numba-cfunc-compiler/actions/workflows/build.yaml/badge.svg?branch=main&event=push)](https://github.com/Point72/numba-cfunc-compiler/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/gh/Point72/numba-cfunc-compiler/branch/main/graph/badge.svg)](https://codecov.io/gh/Point72/numba-cfunc-compiler)
@@ -9,15 +9,22 @@ Generic, framework-agnostic infrastructure for compiling Python functions to Num
 
 ## Overview
 
-Generic, framework-agnostic infrastructure for compiling Python functions to Numba `@cfunc` via AST transformation. All domain-specific behavior is injected through registration APIs.
+A compilation framework that transforms Python functions into native C-callable functions using Numba `@cfunc` and AST rewriting. Unlike using `@cfunc` directly, it provides:
+
+- **Stateful variables** — declare persistent state with natural syntax that survives across calls with automatic lifecycle management (start/execute/stop)
+- **Standalone typed containers** — lists and dicts that work inside compiled functions without Numba's runtime overhead
+- **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering 
+- **Plugin architecture** — all domain-specific behavior (input handlers, output handlers, AST transforms, type inference) is injected through registration APIs
+
+```python
+@numba_node
+def ema(x: Signal[float], alpha: float) -> Signal[float]:
+    s: State[float] = 0.0                    # persistent state, initialized once
+    s = alpha * x + (1.0 - alpha) * s        # natural Python syntax
+    return s                                  # compiled to native code
+```
 
 The distribution is published as `numba-cfunc-compiler` and imported in Python as `numba_cfunc_compiler`.
-
-This package is intended for applications that need to:
-
-- transform Python functions into fixed-signature Numba entry points
-- inject domain-specific typing, AST lowering, and runtime behavior through registrations
-- ship a small native runtime alongside the Python package
 
 ## Installation
 
@@ -301,8 +308,8 @@ Registered by `defaults.register_all()`:
 - **Primitives** — `int` (int64), `float` (float64), `bool` (int8). Support `State[int]`, etc.
 - **DateTime** — Stored as nanoseconds (int64). Constructor calls like `datetime(2020,1,1,tzinfo=timezone.utc)` are lowered to constants at compile time. Must be timezone-aware.
 - **TimeDelta** — Stored as nanoseconds (int64). `timedelta(seconds=5)` lowered to constants.
-- **NumbaList** — NRT-free typed list (`int`/`float`/`bool` elements). Supports `len`, indexing, `append`, `pop`, `clear`, iteration. Created with `create_new_list(int)`.
-- **NumbaDict** — NRT-free typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Created with `create_new_dict(int, float)`.
+- **NumbaList** — Standalone typed list (`int`/`float`/`bool` elements). Supports `len`, indexing, `append`, `pop`, `clear`, iteration. Created with `create_new_list(int)`.
+- **NumbaDict** — Standalone typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Created with `create_new_dict(int, float)`.
 - **Structs** — Opaque void pointers with field metadata. Read/write fields via pointer arithmetic. Base `StructType` must be subclassed with `is_type_supported()`, `_get_struct_fields()`, `_get_struct_size()`.
 
 ## Compilation Options & Post-Compilation Transforms
@@ -323,7 +330,7 @@ result = create_compiled_func(func, *args, options=opts, ...)
 
 **`fastmath`** *(compilation)* — Passes `fastmath=True` to the Numba `@cfunc` decorator, enabling aggressive floating-point optimizations (reassociation, no-NaN, etc.).
 
-**`force_inline`** *(post-compilation)* — Replaces Numba's `noinline` attribute on the cfunc wrapper → native call with `alwaysinline`, letting the LLVM optimizer merge them. Safe with `error_model='numpy'` and `_nrt=False`.
+**`force_inline`** *(post-compilation)* — Replaces Numba's `noinline` attribute on the cfunc wrapper with `alwaysinline`, letting the LLVM optimizer inline the function body into the wrapper and eliminate the extra call.
 
 Regardless of options, the exported wrapper symbol is renamed to `_gc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
 
@@ -405,6 +412,6 @@ def compiled_func(outputs, output_ticked, state, lifecycle_phase, ...):
         ...
 ```
 
-### NRT-free Containers
+### Standalone Containers
 
 `NumbaList` and `NumbaDict` use standalone C implementations (`numba_rt/_py_nrt_init.so`) instead of Numba's reference-counted runtime. Memory is owned by the host framework via state slots. The C library is loaded lazily on first compilation via `CompilationContext.ensure_nrt_loaded()`.
