@@ -13,7 +13,7 @@ A compilation framework that transforms Python functions into native C-callable 
 
 - **Stateful variables** — declare persistent state with natural syntax that survives across calls with automatic lifecycle management (start/execute/stop)
 - **Standalone typed containers** — lists and dicts that work inside compiled functions without Numba's runtime overhead
-- **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering 
+- **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering
 - **Plugin architecture** — all domain-specific behavior (input handlers, output handlers, AST transforms, type inference) is injected through registration APIs
 
 The distribution is published as `numba-cfunc-compiler` and imported in Python as `numba_cfunc_compiler`.
