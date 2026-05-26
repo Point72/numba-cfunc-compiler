@@ -2,7 +2,6 @@ import ast
 import hashlib
 import inspect
 import json
-import logging
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional
 
@@ -76,9 +75,6 @@ class CompilationResult:
         if metadata and name in metadata:
             return metadata[name]
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
-
-
-logger = logging.getLogger("graph_compute")
 
 
 def _build_semantic_key(
@@ -231,7 +227,6 @@ def create_compiled_func(
     )
     new_tree = transformer.visit(tree)
     new_func_code = ast.unparse(new_tree)
-    logger.debug(f"generated code for {name}:\n{new_func_code}")
 
     cfunc_sig = SourceRegistry.build_cfunc_signature()
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"

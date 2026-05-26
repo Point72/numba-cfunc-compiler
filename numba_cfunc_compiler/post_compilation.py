@@ -9,7 +9,7 @@ __all__ = [
     "link_ffi_bitcode",
 ]
 
-logger = logging.getLogger("graph_compute")
+log = logging.getLogger("numba_cfunc_compiler")
 
 
 @dataclass(frozen=True)
@@ -108,6 +108,6 @@ def link_ffi_bitcode(module: Any, bitcode: bytes) -> Any:
         module.verify()
 
     except Exception as e:
-        logger.warning(f"Failed to link FFI bitcode for inlining (falling back to external calls): {e}")
+        log.warning(f"Failed to link FFI bitcode for inlining (falling back to external calls): {e}")
 
     return module

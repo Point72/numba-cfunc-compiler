@@ -130,7 +130,7 @@ class VoidPtrSource(VariableSource):
         # ContainerType handles its own read logic (e.g. list/dict from voidptr)
         if isinstance(self.type, ContainerType):
             return self.type.read(self.local_variable_name(), self.name, loaded_value)
-        # Allow types to prepare themselves before reading (e.g., OrderBookType loads from book_ptrs)
+        # Allow types to prepare themselves before reading
         self.type = self.type.prepare_voidptr_read(self)
         value = AST.cast_from_voidptr(loaded_value, self.type.get_numba_type_name())
         return AST.assignment(self.local_variable_name(), value)
@@ -158,7 +158,7 @@ class OutputSource(VoidPtrSource):
     def local_variable_name(self):
         return f"output_{self.array_idx}_ptr"
 
-    def write(self, value: any):
+    def write(self, value: Any):
         """
         Create: output_(output_idx)_ptr[0] = value
         """
@@ -205,7 +205,7 @@ class ExpressionSource(VariableSource):
 class LocalConstantSource(VariableSource):
     """Local constants created inside the node (mainly used when returning a constant value)"""
 
-    def __init__(self, type: VariableType, name: str, var_value: any):
+    def __init__(self, type: VariableType, name: str, var_value: Any):
         super().__init__(type, name)
         self.var_value = var_value
 
@@ -321,7 +321,7 @@ class VariableFactory:
         self.add_variable(var)
         return var
 
-    def _get_static_key(self, key_node) -> any:
+    def _get_static_key(self, key_node) -> Any:
         """Extract a static key value from an AST node, or return None if dynamic."""
         if isinstance(key_node, ast.Constant):
             return key_node.value

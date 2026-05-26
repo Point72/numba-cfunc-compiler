@@ -17,14 +17,14 @@ __all__ = [
     "AST",
 ]
 
-logger = logging.getLogger("graph_compute")
+log = logging.getLogger("numba_cfunc_compiler")
 
 
 def print_ast(value) -> None:
     ast.fix_missing_locations(value)
     tree = ast.parse(value)
     src = ast.unparse(tree)
-    logger.info(src)
+    log.info(src)
 
 
 def add_statement_to_list(node_list: List[ast.stmt], node: Union[ast.stmt, List[ast.stmt], None]) -> None:

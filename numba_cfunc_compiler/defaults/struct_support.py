@@ -241,7 +241,7 @@ def register():
 
     Note: Base StructType returns False for is_type_supported(), so it won't
     match any types by default. Client code should register their own StructType
-    subclasses (e.g., CspStructType) for struct support.
+    subclasses for struct support.
     """
     from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 
