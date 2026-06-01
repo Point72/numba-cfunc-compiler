@@ -257,13 +257,13 @@ class VariableFactory:
         self.ast_converter = None
 
     def add_variable(self, variable: VariableSource, category: Any = None):
+        if variable.name in self.variable_name_map:
+            raise ValueError(f"variable {variable.name} already exists")
         variable.variable_factory = self
         self.variable_sources[type(variable)].append(variable)
         if category is not None:
             variable.category = category
             self.category_variables[category].append(variable)
-        if variable.name in self.variable_name_map:
-            raise ValueError(f"variable {variable.name} already exists")
         self.variable_name_map[variable.name] = variable
 
     def get_source(self, source_type: type):
