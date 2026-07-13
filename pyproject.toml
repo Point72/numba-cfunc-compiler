@@ -13,13 +13,8 @@ authors = [
 description = "Generic, framework-agnostic infrastructure for compiling Python functions to Numba @cfunc via AST transformation"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-<<<<<<< before updating
 version = "0.1.1"
 requires-python = ">=3.10"
-=======
-version = "0.1.0"
-requires-python = ">=3.11"
->>>>>>> after updating
 keywords = []
 
 classifiers = [
@@ -82,11 +77,7 @@ search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
 [tool.cibuildwheel]
-<<<<<<< before updating
 build = "cp310-*"
-=======
-build = "cp311-* cp312-* cp313-*"
->>>>>>> after updating
 test-command = "echo 'TODO'"
 test-extras = "develop"
 
