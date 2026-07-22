@@ -21,6 +21,7 @@ The compiled function has the C signature:
              void** inputs, int8_t* input_ticked, int8_t* input_valid)
 """
 
+import ctypes
 import inspect
 from typing import Any, Generic, Optional, TypeVar, get_args, get_origin
 
@@ -46,6 +47,7 @@ __all__ = [
     "numba_node",
     "compile_function",
     "setup_standalone_context",
+    "CompiledNode",
 ]
 
 
@@ -205,3 +207,148 @@ def compile_function(func, **constants) -> CompilationResult:
             extract_python_type_fn=lambda s: s.get_type(),
             decorator_name="@numba_node",
         )
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform execution driver
+#
+# Mirrors the ABI set up by cfunc_caller.c, but in pure Python + ctypes so it
+# runs on every platform (Windows included) without needing a C compiler.
+# This is what actually *executes* compiled cfuncs so runtime/FFI bugs (symbol
+# export, ABI/type-width mismatches in the dict/list runtime) surface here.
+#
+# cfunc signature (see cfunc_caller.c):
+#   void (*)(void** outputs, int8_t* output_ticked,
+#            void** state, int8_t lifecycle_phase,
+#            void** inputs, int8_t* input_ticked, int8_t* input_valid)
+# ---------------------------------------------------------------------------
+
+LIFECYCLE_EXECUTE = 0
+LIFECYCLE_START = 1
+LIFECYCLE_STOP = 2
+
+_CFUNC_T = ctypes.CFUNCTYPE(
+    None,  # void
+    ctypes.POINTER(ctypes.c_void_p),  # outputs
+    ctypes.POINTER(ctypes.c_int8),  # output_ticked
+    ctypes.POINTER(ctypes.c_void_p),  # state
+    ctypes.c_int8,  # lifecycle_phase
+    ctypes.POINTER(ctypes.c_void_p),  # inputs
+    ctypes.POINTER(ctypes.c_int8),  # input_ticked
+    ctypes.POINTER(ctypes.c_int8),  # input_valid
+)
+
+
+def _slot_arrays(n):
+    """Return (int64 storage array, void* array) where ptr[i] points at &storage[i].
+
+    Each cfunc value slot is an 8-byte cell; the void* array is what the cfunc
+    receives, matching cfunc_caller.c's `inputs[i] = &input_storage[i]` layout.
+    """
+    count = max(n, 1)
+    storage = (ctypes.c_int64 * count)()
+    ptrs = (ctypes.c_void_p * count)()
+    base = ctypes.addressof(storage)
+    for i in range(count):
+        ptrs[i] = base + i * ctypes.sizeof(ctypes.c_int64)
+    return storage, ptrs
+
+
+class CompiledNode:
+    """Drive a compiled ``@numba_node`` cfunc from Python via ctypes.
+
+    Example::
+
+        result = compile_function(dict_contains)
+        node = CompiledNode(result, input_types=[int]).start()
+        val, ticked = node.execute([1])
+
+    ``input_types`` are the plain Python types (``int``/``float``/``bool``) of
+    the Signal inputs, in declaration order. Output types are taken from the
+    compilation result. Only single-output (``Signal[T]``) nodes are supported,
+    which is all these container tests need.
+    """
+
+    def __init__(self, result, input_types):
+        self._func = _CFUNC_T(result.compiled_func.address)
+        self._input_types = list(input_types)
+        self._n_inputs = len(self._input_types)
+
+        named = result.named_outputs
+        if named is not None:
+            self._output_names = list(named.keys())
+            self._output_types = list(named.values())
+        else:
+            self._output_names = None
+            self._output_types = list(result.output_types)
+        self._n_outputs = len(self._output_types)
+
+        # ``state_values`` is only present when the node declares state.
+        self._n_state = len(getattr(result, "state_values", ()) or ())
+
+        self._in_store, self._inputs = _slot_arrays(self._n_inputs)
+        self._out_store, self._outputs = _slot_arrays(self._n_outputs)
+        # State cells start zeroed (NULL); container state is allocated on START.
+        self._state_store, self._state = _slot_arrays(self._n_state)
+
+        n_in = max(self._n_inputs, 1)
+        self._in_ticked = (ctypes.c_int8 * n_in)(*([1] * n_in))
+        self._in_valid = (ctypes.c_int8 * n_in)(*([1] * n_in))
+        self._out_ticked = (ctypes.c_int8 * max(self._n_outputs, 1))()
+
+    @staticmethod
+    def _write(store, idx, py_type, value):
+        if py_type is float:
+            ctypes.c_double.from_buffer(store, idx * ctypes.sizeof(ctypes.c_int64)).value = float(value)
+        else:  # int / bool live in the low bytes of the int64 cell
+            store[idx] = int(value)
+
+    @staticmethod
+    def _read(store, idx, py_type):
+        if py_type is float:
+            return ctypes.c_double.from_buffer(store, idx * ctypes.sizeof(ctypes.c_int64)).value
+        if py_type is bool:
+            return bool(store[idx] & 0xFF)
+        return int(store[idx])
+
+    def _call(self, phase):
+        self._func(
+            self._outputs,
+            self._out_ticked,
+            self._state,
+            ctypes.c_int8(phase),
+            self._inputs,
+            self._in_ticked,
+            self._in_valid,
+        )
+
+    def start(self):
+        """Run the START lifecycle phase (allocates container state). Returns self."""
+        self._call(LIFECYCLE_START)
+        return self
+
+    def stop(self):
+        """Run the STOP lifecycle phase."""
+        self._call(LIFECYCLE_STOP)
+
+    def execute(self, values, ticked=None, valid=None):
+        """Run one EXECUTE tick with the given input values; return outputs.
+
+        Returns ``(value, ticked)`` for a single-output node.
+        """
+        for i, value in enumerate(values):
+            self._write(self._in_store, i, self._input_types[i], value)
+            self._in_ticked[i] = 1 if ticked is None else int(ticked[i])
+            self._in_valid[i] = 1 if valid is None else int(valid[i])
+        for i in range(self._n_outputs):
+            self._out_ticked[i] = 0
+
+        self._call(LIFECYCLE_EXECUTE)
+
+        values_out = [self._read(self._out_store, i, self._output_types[i]) for i in range(self._n_outputs)]
+        ticks_out = [bool(self._out_ticked[i]) for i in range(self._n_outputs)]
+        if self._output_names is not None:
+            return {name: (values_out[i], ticks_out[i]) for i, name in enumerate(self._output_names)}
+        if self._n_outputs == 1:
+            return values_out[0], ticks_out[0]
+        return list(zip(values_out, ticks_out))
