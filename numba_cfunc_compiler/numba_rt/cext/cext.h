@@ -26,20 +26,14 @@
 #define VISIBILITY_GLOBAL
 #endif
 
-/* Export macros for functions and data.
- * These symbols are resolved dynamically (via llvm.load_library_permanently /
- * GetProcAddress) when JIT-linking cfuncs, so they must be exported from the
- * shared library on every platform. On Windows that requires dllexport; the
- * previous VISIBILITY_HIDDEN mapping left them unexported on MSVC, causing
- * access violations when compiled code called into the numba dict/list runtime. */
 #define NUMBA_EXPORT_FUNC(_rettype) VISIBILITY_GLOBAL _rettype
 #define NUMBA_EXPORT_DATA(_vartype) VISIBILITY_GLOBAL _vartype
 #define NUMBA_GLOBAL_FUNC(_rettype) VISIBILITY_GLOBAL _rettype
 
 /* Python-compatible types (standalone, no Python.h dependency) */
 typedef struct _object PyObject;
-typedef long Py_ssize_t;
-typedef unsigned long Py_hash_t;
+typedef intptr_t Py_ssize_t;
+typedef uintptr_t Py_hash_t;
 
 #define PY_SSIZE_T_MAX ((Py_ssize_t)(((size_t)-1) >> 1))
 #define PY_SSIZE_T_MIN (-PY_SSIZE_T_MAX - 1)
