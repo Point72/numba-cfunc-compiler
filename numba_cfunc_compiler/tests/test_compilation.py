@@ -12,6 +12,7 @@ Flow:
 
 import ctypes
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -89,6 +90,11 @@ class TestCompilation(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # This suite drives compiled cfuncs through a gcc-built C runner, so it
+        # is limited to platforms with gcc (Linux/macOS). Cross-platform
+        # execution coverage (incl. Windows) lives in test_containers.py.
+        if shutil.which("gcc") is None:
+            raise unittest.SkipTest("gcc not available; see test_containers.py for cross-platform execution tests")
         cls.lib = _build_test_runner()
 
     def test_all_from_cpp(self):
