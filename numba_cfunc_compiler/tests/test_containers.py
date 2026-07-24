@@ -105,6 +105,12 @@ class TestDictExecution(unittest.TestCase):
         got = [node.execute([k, v])[0] for k, v in zip(keys, vals)]
         self.assertEqual(got, [10.0, 20.0, 40.0, 60.0, 90.0])
 
+    def test_stop_frees_state(self):
+        node = CompiledNode(compile_function(dict_contains), input_types=[int]).start()
+        node.execute([1])
+        node.stop()
+        self.assertIsNone(node._state[0])
+
 
 class TestListExecution(unittest.TestCase):
     def test_append_len(self):
@@ -117,6 +123,12 @@ class TestListExecution(unittest.TestCase):
         node = CompiledNode(compile_function(list_append_last), input_types=[int]).start()
         self.assertEqual(node.execute([10])[0], 10)
         self.assertEqual(node.execute([20])[0], 20)
+
+    def test_stop_frees_state(self):
+        node = CompiledNode(compile_function(list_append_len), input_types=[int]).start()
+        node.execute([10])
+        node.stop()
+        self.assertIsNone(node._state[0])
 
 
 if __name__ == "__main__":

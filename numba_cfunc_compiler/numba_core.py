@@ -22,12 +22,14 @@ from numba_cfunc_compiler.standalone.dict import (
     _standalone_dict_iter_begin,
     _standalone_dict_iter_next_item,
     _standalone_dict_iter_next_key,
+    standalone_dict_free,
     standalone_dict_from_voidptr,
     standalone_dict_length,
     standalone_dict_new,
     standalone_dict_to_voidptr,
 )
 from numba_cfunc_compiler.standalone.list import (
+    standalone_list_free,
     standalone_list_from_voidptr,
     standalone_list_new,
     standalone_list_to_voidptr,
@@ -266,10 +268,12 @@ def create_compiled_func(
             # standalone list (NRT-free)
             "standalone_list_new": standalone_list_new,
             "standalone_list_from_voidptr": standalone_list_from_voidptr,
+            "standalone_list_free": standalone_list_free,
             "standalone_list_to_voidptr": standalone_list_to_voidptr,
             # standalone dict (NRT-free)
             "standalone_dict_new": standalone_dict_new,
             "standalone_dict_from_voidptr": standalone_dict_from_voidptr,
+            "standalone_dict_free": standalone_dict_free,
             "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
             "standalone_dict_length": standalone_dict_length,
             "_standalone_dict_iter_begin": _standalone_dict_iter_begin,

@@ -154,6 +154,22 @@ def standalone_dict_new(typingctx, key_size_ty, val_size_ty):
 
 
 @intrinsic
+def standalone_dict_free(typingctx, dict_ty):
+    """Release an NB_Dict allocated by :func:`standalone_dict_new`."""
+    if isinstance(dict_ty, StandaloneDictType):
+        sig = types.void(dict_ty)
+
+        def codegen(context, builder, signature, args):
+            [dict_ptr] = args
+            fnty = ir.FunctionType(ir.VoidType(), [i8ptr()])
+            fn = get_or_declare_function(builder.module, "numba_dict_free", fnty)
+            builder.call(fn, [dict_ptr])
+            return context.get_dummy_value()
+
+        return sig, codegen
+
+
+@intrinsic
 def standalone_dict_length(typingctx, dict_ty):
     """
     Get the length of a StandaloneDict.
