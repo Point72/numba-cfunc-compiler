@@ -269,6 +269,9 @@ class ContainerType(VariableType):
     def _to_voidptr_func_name(self) -> str:
         raise NotImplementedError
 
+    def _free_func_name(self) -> str:
+        raise NotImplementedError
+
     def create_new_container(self, var_name: str) -> list[ast.AST]:
         raise NotImplementedError
 
@@ -306,6 +309,27 @@ class ContainerType(VariableType):
                     v.local_variable_name(),
                     v.name,
                     ast.Name(id=loaded_name, ctx=ast.Load()),
+                )
+            )
+        return statements
+
+    @staticmethod
+    def emit_container_state_free(standalone_state_vars, state_array_name: str = STATE_ARRAY_NAME) -> list[ast.stmt]:
+        """Free state containers and clear their host state slots on STOP."""
+        statements: list[ast.stmt] = []
+        for v in standalone_state_vars:
+            statements.append(
+                ast.Expr(
+                    value=AST.function_call(
+                        v.type._free_func_name(),
+                        ast.Name(id=v.local_variable_name(), ctx=ast.Load()),
+                    )
+                )
+            )
+            statements.append(
+                AST.assignment(
+                    AST.array_access(state_array_name, v.array_idx),
+                    AST.function_call("voidptr_null"),
                 )
             )
         return statements
