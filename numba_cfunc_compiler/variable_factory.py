@@ -1,7 +1,7 @@
 import ast
 import copy
 from collections import defaultdict
-from typing import Any, List
+from typing import Any
 
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.models import (
@@ -17,14 +17,14 @@ from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
-    "VariableSource",
-    "VoidPtrSource",
-    "OutputSource",
-    "LocalVariableSource",
+    "ConstantSource",
     "ExpressionSource",
     "LocalConstantSource",
-    "ConstantSource",
+    "LocalVariableSource",
+    "OutputSource",
     "VariableFactory",
+    "VariableSource",
+    "VoidPtrSource",
 ]
 
 
@@ -252,7 +252,7 @@ class VariableFactory:
     def __init__(self):
         self.variable_sources = defaultdict(list)
         self.category_variables = defaultdict(list)
-        self.variable_name_map = dict()
+        self.variable_name_map = {}
         self.temporary_variable_counter = 0
         self.ast_converter = None
 
@@ -299,13 +299,13 @@ class VariableFactory:
         assign = AST.assignment(var_name, value)
         return var, assign
 
-    def create_temporary_variable(self, type, value, statements: List[ast.stmt]):
+    def create_temporary_variable(self, type, value, statements: list[ast.stmt]):
         name = self.create_temporary_variable_name()
         var, assign = self.add_local_variable(type, name, value)
         statements.append(assign)
         return var
 
-    def _visit_and_create_temp_var(self, visitor, ast_node, statements: List[ast.stmt]):
+    def _visit_and_create_temp_var(self, visitor, ast_node, statements: list[ast.stmt]):
         """Visit an AST node and create a temporary variable for its result."""
         values = visitor.visit(ast_node)
         # If visiting returns a list, preceding items are statements; last is the value
@@ -372,7 +372,7 @@ class VariableFactory:
         index_expr = visitor.visit(key_node) if visitor else key_node
         return container.create_dynamic_access(index_expr, variable_factory=self)
 
-    def from_ast(self, visitor, ast_node: ast.AST, statements: List[ast.stmt]):
+    def from_ast(self, visitor, ast_node: ast.AST, statements: list[ast.stmt]):
         if isinstance(ast_node, ast.Name):
             existing = self.from_name(ast_node.id)
             if existing is not None:

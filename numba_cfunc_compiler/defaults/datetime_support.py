@@ -42,7 +42,7 @@ class DateTimeType(VariableType):
         return None
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> Optional[tuple[list, "DateTimeType"]]:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, "DateTimeType"] | None:
         """Lower: x = datetime(2020, 1, 1, tzinfo=timezone.utc) → x = <nanoseconds>"""
         if not isinstance(rhs, ast.Call):
             return None
@@ -64,7 +64,7 @@ class DateTimeType(VariableType):
         return AST.assignment(var_name, ast.Constant(value=nanos)), var_type
 
     @classmethod
-    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> Optional[StateVariableInfo]:
+    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:
         """Parse State[datetime] declarations."""
         slice_node = node.annotation.slice
 
@@ -83,7 +83,7 @@ class DateTimeType(VariableType):
 
         # Handle constructor calls like datetime(...)
         if isinstance(value_node, ast.Call):
-            val, func_name = TypeHelper.eval_time_constructor(value_node)
+            val, _func_name = TypeHelper.eval_time_constructor(value_node)
             if val is not None and isinstance(val, _PyDatetime):
                 return cls.to_nanos(val)
 

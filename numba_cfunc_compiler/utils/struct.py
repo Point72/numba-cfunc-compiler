@@ -145,6 +145,4 @@ class StructHelper:
                     ],
                 )
 
-                return None
-
             return sig, codegen

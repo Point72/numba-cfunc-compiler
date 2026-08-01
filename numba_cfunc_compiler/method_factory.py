@@ -1,6 +1,5 @@
 import ast
 from abc import ABC, abstractmethod
-from typing import Dict, List, Type
 
 from numba_cfunc_compiler.numba_config import (
     TICKED_OUTPUTS_ARRAY_NAME,
@@ -100,9 +99,9 @@ class Output(MethodBase):
 
 
 def ffi_method_factory(
-    method_list: Dict[str, tuple],
-    method_postfix: str = None,
-) -> List[Type]:
+    method_list: dict[str, tuple],
+    method_postfix: str | None = None,
+) -> list[type]:
     """
     Create method handler classes for each FFI method in the method list.
 
@@ -164,7 +163,7 @@ def ffi_method_factory(
     return method_classes
 
 
-def method_handler_factory(handler_name: str, methods_to_handle: List[Type]) -> Type:
+def method_handler_factory(handler_name: str, methods_to_handle: list[type]) -> type:
     """
     Create a method handler class that dispatches to the appropriate method.
 

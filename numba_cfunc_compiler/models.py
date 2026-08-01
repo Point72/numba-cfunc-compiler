@@ -2,7 +2,7 @@ import ast
 import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from numba_cfunc_compiler.numba_config import (
     STATE_ARRAY_NAME,
@@ -11,25 +11,25 @@ from numba_cfunc_compiler.numba_config import (
 from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
-    # Type markers and sentinels
-    "ListTypeMarker",
-    "DictTypeMarker",
-    "UnknownNumbaType",
-    "UnknownNumbaValue",
-    "NoneType",
-    # Variable types
-    "VariableType",
-    "ContainerType",
-    "UnknownType",
-    # Parameter/state info
-    "ParameterInfo",
-    "StateVariableInfo",
-    # Analysis results
-    "InputAnalysis",
-    "StateAnalysis",
-    "OutputAnalysis",
     # Constants
     "CONTAINER_STATE_INIT",
+    "ContainerType",
+    "DictTypeMarker",
+    # Analysis results
+    "InputAnalysis",
+    # Type markers and sentinels
+    "ListTypeMarker",
+    "NoneType",
+    "OutputAnalysis",
+    # Parameter/state info
+    "ParameterInfo",
+    "StateAnalysis",
+    "StateVariableInfo",
+    "UnknownNumbaType",
+    "UnknownNumbaValue",
+    "UnknownType",
+    # Variable types
+    "VariableType",
 ]
 
 # Sentinel value for container state initialization (created lazily on first use)
@@ -67,13 +67,13 @@ class InputAnalysis:
         parameters: Dict mapping param name to (validated_value, ParameterInfo).
     """
 
-    parameters: Dict[str, tuple] = field(default_factory=dict)  # name -> (value, ParameterInfo)
+    parameters: dict[str, tuple] = field(default_factory=dict)  # name -> (value, ParameterInfo)
 
-    def get_by_category(self, category: str) -> Dict[str, Any]:
+    def get_by_category(self, category: str) -> dict[str, Any]:
         """Get parameters by category. Returns {name: value}."""
         return {name: value for name, (value, info) in self.parameters.items() if info.category == category}
 
-    def get_params_by_category(self, category: str) -> Dict[str, tuple]:
+    def get_params_by_category(self, category: str) -> dict[str, tuple]:
         """Get full parameter info by category. Returns {name: (value, ParameterInfo)}."""
         return {name: (value, info) for name, (value, info) in self.parameters.items() if info.category == category}
 
@@ -82,9 +82,9 @@ class InputAnalysis:
 class StateAnalysis:
     """Summarized info about all state variables of a numba_node function."""
 
-    state_vars: Dict[str, StateVariableInfo] = field(default_factory=dict)
+    state_vars: dict[str, StateVariableInfo] = field(default_factory=dict)
 
-    def sorted_by_size(self) -> List[StateVariableInfo]:
+    def sorted_by_size(self) -> list[StateVariableInfo]:
         """Sort state variables by size (largest first), then by name."""
         from numba_cfunc_compiler.type_factory import TypeFactory
 
@@ -98,8 +98,8 @@ class StateAnalysis:
 class OutputAnalysis:
     """Summarized info about all output parameters of a numba_node function."""
 
-    output_types: List[type]
-    named_outputs: Optional[Dict[str, type]] = None
+    output_types: list[type]
+    named_outputs: dict[str, type] | None = None
 
 
 @dataclass(frozen=True)
@@ -133,19 +133,13 @@ class DictTypeMarker:
 class UnknownNumbaType:
     """Sentinel for unknown numba types."""
 
-    pass
-
 
 class UnknownNumbaValue:
     """Sentinel for unknown values (used when value is not provided)."""
 
-    pass
-
 
 class NoneType:
     """Sentinel for None type."""
-
-    pass
 
 
 @dataclass(frozen=True)
@@ -215,7 +209,7 @@ class VariableType(ABC):
         return None
 
     @classmethod
-    def try_lower_assignment(cls, node: "ast.Assign", rhs: "ast.AST", call_globals: dict) -> Optional[tuple[list, "VariableType"]]:
+    def try_lower_assignment(cls, node: "ast.Assign", rhs: "ast.AST", call_globals: dict) -> tuple[list, "VariableType"] | None:
         """
         Try to lower/transform an assignment AST node.
 
@@ -275,7 +269,7 @@ class ContainerType(VariableType):
     def _to_voidptr_func_name(self) -> str:
         raise NotImplementedError
 
-    def create_new_container(self, var_name: str) -> List[ast.AST]:
+    def create_new_container(self, var_name: str) -> list[ast.AST]:
         raise NotImplementedError
 
     def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST) -> ast.AST:

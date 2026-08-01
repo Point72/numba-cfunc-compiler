@@ -2,8 +2,9 @@ import ast
 import hashlib
 import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional
+from typing import Any
 
 import numba
 from numba import cfunc, float64, int8, int64
@@ -41,8 +42,8 @@ from numba_cfunc_compiler.variable_factory import (
 __all__ = [
     "CompilationOptions",
     "CompilationResult",
-    "create_compiled_func",
     "NumbaFunctionInfo",  # kept for advanced use cases
+    "create_compiled_func",
 ]
 
 
@@ -58,8 +59,8 @@ class CompilationResult:
     """
 
     compiled_func: Any
-    output_types: List[type]
-    named_outputs: Optional[dict]  # None for single output
+    output_types: list[type]
+    named_outputs: dict | None  # None for single output
     native_name: str = ""
     semantic_key: str = ""
     llvm_ir: str = ""
@@ -104,8 +105,8 @@ class NumbaFunctionInfo:
         *args,
         extract_python_type_fn: Callable[[Any], type],
         decorator_name: str,
-        func_globals: Optional[dict] = None,
-        signature: Optional[inspect.Signature] = None,
+        func_globals: dict | None = None,
+        signature: inspect.Signature | None = None,
         **kwargs,
     ):
         # Handle both callable and ast.FunctionDef
@@ -130,7 +131,7 @@ class NumbaFunctionInfo:
         try:
             self._initialize_and_validate(*args, **kwargs)
         except Exception as e:
-            error_msg = f"Error in numba_node function '{self.name}': {str(e)}"
+            error_msg = f"Error in numba_node function '{self.name}': {e!s}"
             raise type(e)(error_msg) from e
 
     def _initialize_and_validate(self, *args, **kwargs):
@@ -168,12 +169,12 @@ def create_compiled_func(
     *args,
     extract_python_type_fn: Callable[[Any], type],
     decorator_name: str = "@numba_node",
-    func_globals: Optional[dict] = None,
-    signature: Optional[inspect.Signature] = None,
-    call_globals: Optional[dict] = None,
-    start_body: Optional[List[ast.AST]] = None,
-    stop_body: Optional[List[ast.AST]] = None,
-    options: Optional[CompilationOptions] = None,
+    func_globals: dict | None = None,
+    signature: inspect.Signature | None = None,
+    call_globals: dict | None = None,
+    start_body: list[ast.AST] | None = None,
+    stop_body: list[ast.AST] | None = None,
+    options: CompilationOptions | None = None,
     **kwargs,
 ) -> CompilationResult:
     """
@@ -276,7 +277,7 @@ def create_compiled_func(
             "_standalone_dict_iter_next_key": _standalone_dict_iter_next_key,
         }
     )
-    exec(cfunc_code, exec_globals)
+    exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
 
     compiled_func = exec_globals[name]
 

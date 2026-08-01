@@ -1,12 +1,12 @@
 import ast
-from typing import Iterable
+from collections.abc import Iterable
 
 __all__ = [
     "STATE_ANNOTATION_NAME",
+    "append_state_values_to_return",
+    "inject_state_params",
     "is_state_annotation",
     "state_annotation_target",
-    "inject_state_params",
-    "append_state_values_to_return",
 ]
 
 
