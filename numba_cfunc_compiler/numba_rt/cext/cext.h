@@ -18,7 +18,7 @@
 #if defined(_MSC_VER)
 #define VISIBILITY_HIDDEN
 #define VISIBILITY_GLOBAL __declspec(dllexport)
-#elif (__has_attribute(visibility) || (defined(__GNUC__) && __GNUC__ >= 4))
+#elif __has_attribute(visibility) || (defined(__GNUC__) && __GNUC__ >= 4)
 #define VISIBILITY_HIDDEN __attribute__((visibility("default")))
 #define VISIBILITY_GLOBAL __attribute__((visibility("default")))
 #else
@@ -35,7 +35,7 @@ typedef struct _object PyObject;
 typedef intptr_t Py_ssize_t;
 typedef uintptr_t Py_hash_t;
 
-#define PY_SSIZE_T_MAX ((Py_ssize_t)(((size_t)-1) >> 1))
+#define PY_SSIZE_T_MAX INTPTR_MAX
 #define PY_SSIZE_T_MIN (-PY_SSIZE_T_MAX - 1)
 
 #ifndef assert
