@@ -126,6 +126,7 @@ packages = [
     "numba_cfunc_compiler",
 ]
 
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "numba_cfunc_compiler",
