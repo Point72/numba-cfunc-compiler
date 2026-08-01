@@ -11,7 +11,7 @@ Provides:
 
 import ast
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from numba_cfunc_compiler.models import UnknownNumbaValue, VariableType
 from numba_cfunc_compiler.type_factory import TypeFactory
@@ -50,7 +50,7 @@ class StructType(VariableType):
     - set_field(): Write a field value
     """
 
-    fields: Dict[str, StructFieldInfo] = None
+    fields: dict[str, StructFieldInfo] = None
     size: int = 0
 
     def get_numba_type_name(self) -> str:
@@ -110,7 +110,7 @@ class StructType(VariableType):
         return AST.function_call("struct_field_store", struct_ptr, offset, type_name, value_expr)
 
     @classmethod
-    def _get_struct_fields(cls, var_type: type) -> Dict[str, StructFieldInfo]:
+    def _get_struct_fields(cls, var_type: type) -> dict[str, StructFieldInfo]:
         """Override in subclasses to provide field metadata."""
         return {}
 
@@ -146,7 +146,7 @@ def is_struct_type(var_type) -> bool:
     return isinstance(var_type, StructType)
 
 
-def struct_attribute_transformer(node: ast.AST, globalns: dict, variable_factory) -> Optional[ast.AST]:
+def struct_attribute_transformer(node: ast.AST, globalns: dict, variable_factory) -> ast.AST | None:
     """Transform struct field access to struct_field_access call.
 
     Handles both simple access (struct_var.field) and dynamic access (basket[i].field).

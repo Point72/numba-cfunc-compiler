@@ -23,7 +23,7 @@ The compiled function has the C signature:
 
 import ctypes
 import inspect
-from typing import Any, Generic, Optional, TypeVar, get_args, get_origin
+from typing import Any, Generic, TypeVar, get_args, get_origin
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.defaults import register_all
@@ -43,11 +43,11 @@ from numba_cfunc_compiler.source_registry import (
 )
 
 __all__ = [
-    "Signal",
-    "numba_node",
-    "compile_function",
-    "setup_standalone_context",
     "CompiledNode",
+    "Signal",
+    "compile_function",
+    "numba_node",
+    "setup_standalone_context",
 ]
 
 
@@ -59,7 +59,7 @@ _DEFAULT_VALUES = {int: 0, float: 0.0, bool: False}
 class Signal(Generic[T]):
     """Minimal signal type for standalone use. Wraps a typed value."""
 
-    def __init__(self, value: Any = None, typ: type = None):
+    def __init__(self, value: Any = None, typ: type | None = None):
         self._type = typ or (type(value) if value is not None else int)
         self._value = value if value is not None else _DEFAULT_VALUES.get(self._type, 0)
 
@@ -68,7 +68,7 @@ class Signal(Generic[T]):
 
 
 class _SignalInputHandler(InputTypeHandler):
-    def try_parse(self, param: inspect.Parameter, ann: Any) -> Optional[ParameterInfo]:
+    def try_parse(self, param: inspect.Parameter, ann: Any) -> ParameterInfo | None:
         if get_origin(ann) is not Signal:
             return None
         args = get_args(ann)
@@ -83,7 +83,7 @@ class _SignalInputHandler(InputTypeHandler):
 
 
 class _SingleSignalOutputHandler(OutputTypeHandler):
-    def try_parse(self, return_annotation: Any, ast_tree) -> Optional[OutputAnalysis]:
+    def try_parse(self, return_annotation: Any, ast_tree) -> OutputAnalysis | None:
         if get_origin(return_annotation) is not Signal:
             return None
         args = get_args(return_annotation)
@@ -122,10 +122,9 @@ class _SignalCategory(SourceCategory):
         from numba_cfunc_compiler.type_factory import TypeFactory
         from numba_cfunc_compiler.variable_factory import VoidPtrSource
 
-        input_idx = 0
         info.ordered_input_signals = []
 
-        for name, signal_obj in info.input_analysis.get_by_category("signal").items():
+        for input_idx, (name, signal_obj) in enumerate(info.input_analysis.get_by_category("signal").items()):
             var_type = TypeFactory.get_type(info.extract_python_type_fn(signal_obj))
             var = VoidPtrSource(
                 array_idx=input_idx,
@@ -136,7 +135,6 @@ class _SignalCategory(SourceCategory):
             )
             factory.add_variable(var, category=self.id)
             info.ordered_input_signals.append(signal_obj)
-            input_idx += 1
 
     def get_result_metadata(self, info):
         return {"ordered_input_signals": list(info.ordered_input_signals)}

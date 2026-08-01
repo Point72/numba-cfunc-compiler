@@ -211,9 +211,8 @@ def standalone_list_length(typingctx, lst_ty):
 @intrinsic
 def standalone_list_append(typingctx, lst_ty, value_ty):
     """Append a value to a StandaloneList."""
-    if isinstance(lst_ty, StandaloneListType):
-        if isinstance(value_ty, (types.Integer, types.Float)):
-            return types.int32(lst_ty, value_ty), _make_append_codegen(lst_ty.dtype)
+    if isinstance(lst_ty, StandaloneListType) and isinstance(value_ty, (types.Integer, types.Float)):
+        return types.int32(lst_ty, value_ty), _make_append_codegen(lst_ty.dtype)
 
 
 @intrinsic
@@ -266,9 +265,8 @@ def standalone_list_to_voidptr(typingctx, lst_ty):
 @intrinsic
 def standalone_list_setitem(typingctx, lst_ty, index_ty, value_ty):
     """Set an item in a StandaloneList."""
-    if isinstance(lst_ty, StandaloneListType) and isinstance(index_ty, types.Integer):
-        if isinstance(value_ty, (types.Integer, types.Float)):
-            return types.int32(lst_ty, index_ty, value_ty), _make_setitem_codegen(lst_ty.dtype)
+    if isinstance(lst_ty, StandaloneListType) and isinstance(index_ty, types.Integer) and isinstance(value_ty, (types.Integer, types.Float)):
+        return types.int32(lst_ty, index_ty, value_ty), _make_setitem_codegen(lst_ty.dtype)
 
 
 @intrinsic
@@ -415,11 +413,10 @@ def overload_getitem_standalone_list(lst, index):
 @overload(operator.setitem)
 def overload_setitem_standalone_list(lst, index, value):
     """Overload lst[i] = x for StandaloneListType with negative index support."""
-    if isinstance(lst, StandaloneListType) and isinstance(index, types.Integer):
-        if isinstance(value, (types.Integer, types.Float)):
+    if isinstance(lst, StandaloneListType) and isinstance(index, types.Integer) and isinstance(value, (types.Integer, types.Float)):
 
-            def impl(lst, index, value):
-                idx = _normalize_index(index, standalone_list_length(lst))
-                standalone_list_setitem(lst, idx, value)
+        def impl(lst, index, value):
+            idx = _normalize_index(index, standalone_list_length(lst))
+            standalone_list_setitem(lst, idx, value)
 
-            return impl
+        return impl

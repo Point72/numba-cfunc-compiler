@@ -1,15 +1,15 @@
 import ast
-from typing import Annotated, Any, Dict, List, Optional, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin
 
 __all__ = [
     "collect_return_nodes",
-    "validate_single_return",
-    "validate_return_arity",
     "parse_annotated_metadata_dict",
+    "validate_return_arity",
+    "validate_single_return",
 ]
 
 
-def collect_return_nodes(ast_tree: ast.AST) -> List[ast.Return]:
+def collect_return_nodes(ast_tree: ast.AST) -> list[ast.Return]:
     """Return every `return <expr>` node in the tree (skips bare `return`)."""
     return [node for node in ast.walk(ast_tree) if isinstance(node, ast.Return) and node.value is not None]
 
@@ -20,8 +20,9 @@ def validate_single_return(ast_tree: ast.AST) -> None:
     if not return_nodes:
         raise ValueError("expects 1 output but has no return statements")
     for return_node in return_nodes:
-        if isinstance(return_node.value, ast.Tuple):
-            raise ValueError(f"returns {len(return_node.value.elts)} values but annotation expects 1.")
+        actual = len(return_node.value.elts) if isinstance(return_node.value, ast.Tuple) else 1
+        if actual != 1:
+            raise ValueError(f"returns {actual} values but annotation expects 1.")
 
 
 def validate_return_arity(ast_tree: ast.AST, expected: int) -> None:
@@ -37,7 +38,7 @@ def parse_annotated_metadata_dict(
     expected_base: type,
     base_label: str,
     example: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Validate an `Annotated[expected_base, {name: spec, ...}]` annotation.
 
     Returns the metadata dict on success, or None if `annotation` is not an

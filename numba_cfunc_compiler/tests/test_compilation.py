@@ -28,6 +28,7 @@ def _build_test_runner():
     result = subprocess.run(
         ["gcc", "-shared", "-fPIC", "-O2", "-lm", "-o", lib_path, src],
         capture_output=True,
+        check=False,
         text=True,
     )
     if result.returncode != 0:

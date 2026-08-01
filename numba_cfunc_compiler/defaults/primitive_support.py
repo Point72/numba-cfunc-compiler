@@ -4,7 +4,7 @@ import ast
 import inspect
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Optional, Tuple
+from typing import Any, ClassVar, Optional
 
 from numba import types as numba_types
 
@@ -23,8 +23,8 @@ class PrimitiveType(VariableType):
     """Handles primitive types: int, float, bool."""
 
     _PRIMITIVE_TYPES = (int, float, bool)
-    _CONSTANT_INPUT_TYPES: Tuple[type, ...] = (int, float, bool, datetime, timedelta)
-    _STATE_TYPE_NAMES = {"int": int, "float": float, "bool": bool}
+    _CONSTANT_INPUT_TYPES: tuple[type, ...] = (int, float, bool, datetime, timedelta)
+    _STATE_TYPE_NAMES: ClassVar[dict[str, type]] = {"int": int, "float": float, "bool": bool}
 
     def get_numba_type_name(self) -> str:
         return NumbaTypeRegistry.resolve_numba_name(self.value)
@@ -44,7 +44,7 @@ class PrimitiveType(VariableType):
         return None
 
     @classmethod
-    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> Optional[ParameterInfo]:
+    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> ParameterInfo | None:
         """Parse constant input annotations: int, float, bool, datetime, timedelta."""
         if ann in cls._CONSTANT_INPUT_TYPES:
             return ParameterInfo(expected_type=ann)  # defaults to category="constant"
@@ -69,7 +69,7 @@ class PrimitiveType(VariableType):
         return value
 
     @classmethod
-    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> Optional[StateVariableInfo]:
+    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:
         """Parse State[int], State[float], State[bool] declarations."""
         slice_node = node.annotation.slice
 

@@ -4,7 +4,7 @@ from datetime import (
     timedelta as _PyTimedelta,
     timezone as _PyTimezone,
 )
-from typing import Any, Optional
+from typing import Any, ClassVar
 
 __all__ = [
     "TypeHelper",
@@ -14,7 +14,7 @@ __all__ = [
 class TypeHelper:
     """Helper utilities for datetime/timedelta parsing and conversion."""
 
-    _TIME_EVAL_GLOBALS = {
+    _TIME_EVAL_GLOBALS: ClassVar[dict[str, Any]] = {
         "datetime": _PyDatetime,
         "timedelta": _PyTimedelta,
         "timezone": _PyTimezone,
@@ -22,7 +22,7 @@ class TypeHelper:
     _TIME_ALLOWED_NAMES = frozenset(_TIME_EVAL_GLOBALS.keys())
 
     @staticmethod
-    def get_time_func_name(node: ast.AST) -> Optional[str]:
+    def get_time_func_name(node: ast.AST) -> str | None:
         """Extract function name if node is a datetime/timedelta call, else None."""
         if not isinstance(node, ast.Call):
             return None
@@ -31,9 +31,13 @@ class TypeHelper:
         if isinstance(func, ast.Name) and func.id in ("datetime", "timedelta"):
             return func.id
         # datetime.datetime(...), datetime.timedelta(...)
-        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "datetime":
-            if func.attr in ("datetime", "timedelta"):
-                return func.attr
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "datetime"
+            and func.attr in ("datetime", "timedelta")
+        ):
+            return func.attr
         return None
 
     @staticmethod
@@ -49,7 +53,7 @@ class TypeHelper:
             raise TypeError(f"Unsupported node in time literal: {ast.dump(sub)}")
 
     @staticmethod
-    def eval_time_constructor(node: ast.Call) -> tuple[Any, Optional[str]]:
+    def eval_time_constructor(node: ast.Call) -> tuple[Any, str | None]:
         """
         Evaluate a datetime/timedelta AST call and return (value, func_name).
         Returns (None, None) if not a time constructor.
@@ -75,7 +79,7 @@ class TypeHelper:
             raise TypeError(f"Failed to evaluate {func_name}() constructor: {e}") from e
 
     @staticmethod
-    def lower_time_constructor(node: ast.AST) -> Optional[ast.Constant]:
+    def lower_time_constructor(node: ast.AST) -> ast.Constant | None:
         """Convert a datetime/timedelta AST call to a nanoseconds constant node."""
         func_name = TypeHelper.get_time_func_name(node)
         if func_name is None:

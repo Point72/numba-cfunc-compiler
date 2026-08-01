@@ -1,6 +1,6 @@
 import ast
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.models import VariableType
@@ -14,12 +14,12 @@ from numba_cfunc_compiler.variable_factory import (
 )
 
 __all__ = [
-    "OpKind",
-    "CallHandler",
+    "AssignmentHandler",
     "AttrAccessor",
     "AttrLowerer",
-    "AssignmentHandler",
+    "CallHandler",
     "NumbaTypeInference",
+    "OpKind",
 ]
 
 
@@ -73,7 +73,7 @@ class NumbaTypeInference:
         ctx.attr_accessors.clear()
         ctx.attr_lowerers.clear()
 
-    def __init__(self, variable_factory: VariableFactory, call_globals: dict = None):
+    def __init__(self, variable_factory: VariableFactory, call_globals: dict | None = None):
         self.variable_factory = variable_factory
         self.call_globals = call_globals or {}
 

@@ -107,7 +107,7 @@ def link_ffi_bitcode(module: Any, bitcode: bytes) -> Any:
         module = llvm.parse_assembly(ir_text)
         module.verify()
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - optimization failure must fall back
         log.warning(f"Failed to link FFI bitcode for inlining (falling back to external calls): {e}")
 
     return module

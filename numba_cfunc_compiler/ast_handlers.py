@@ -1,8 +1,9 @@
 import ast
 import functools
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable
+from typing import Any
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 
@@ -10,8 +11,8 @@ __all__ = [
     "ASTHandlerRegistry",
     "HandlerPhase",
     "HandlerResult",
-    "with_handlers",
     "ast_handler",
+    "with_handlers",
 ]
 
 

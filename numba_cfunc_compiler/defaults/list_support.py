@@ -3,7 +3,7 @@
 import ast
 import inspect
 from dataclasses import dataclass
-from typing import Any, List, Optional, get_args, get_origin
+from typing import Any, get_args, get_origin
 
 from numba_cfunc_compiler.models import (
     CONTAINER_STATE_INIT,
@@ -35,7 +35,7 @@ class NumbaListType(ContainerType):
     def _elem_type_name(self) -> str:
         return NumbaTypeRegistry.resolve_numba_name(self.value.element_type)
 
-    def create_new_container(self, var_name: str) -> List[ast.AST]:
+    def create_new_container(self, var_name: str) -> list[ast.AST]:
         item_size = NumbaTypeRegistry.get_size(self.value.element_type)
         return [
             AST.assignment(
@@ -108,7 +108,7 @@ class NumbaListType(ContainerType):
         return var_type.create_new_container(var_name), var_type
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> Optional[tuple[list, "NumbaListType"]]:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, "NumbaListType"] | None:
         """Lower: l = create_new_list(int) → standalone list initialization"""
         if not isinstance(rhs, ast.Call):
             return None
@@ -139,7 +139,7 @@ class NumbaListType(ContainerType):
         return isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name) and value_node.func.id == "create_new_list"
 
     @classmethod
-    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> Optional[StateVariableInfo]:
+    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:
         """Parse State[NumbaList] = create_new_list(elem_type) declarations."""
         if not cls._is_create_new_list_call(node.value):
             return None
@@ -162,7 +162,7 @@ class NumbaListType(ContainerType):
         return StateVariableInfo(var_name, CONTAINER_STATE_INIT, state_type)
 
     @classmethod
-    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> Optional[ParameterInfo]:
+    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> ParameterInfo | None:
         """Parse NumbaList[element_type] constant input annotations."""
         origin = get_origin(ann)
         if origin is not NumbaList:
