@@ -1,19 +1,19 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 
 ### Public API ###
 
 __all__ = (
-    "set_output",
-    "State",
-    "create_new_list",
-    "create_new_dict",
-    "NumbaList",
     "NumbaDict",
+    "NumbaList",
     "NumbaTypeInfo",
     "NumbaTypeRegistry",
+    "State",
+    "create_new_dict",
+    "create_new_list",
+    "set_output",
 )
 
 
@@ -34,8 +34,6 @@ def set_output(name: str, value: Any):
 class State(Generic[T]):
     """Marks a variable as stateful (persistent between function calls)"""
 
-    pass
-
 
 class NumbaList(Generic[T]):
     """
@@ -54,8 +52,6 @@ class NumbaList(Generic[T]):
     For state variables, use State[NumbaList] with create_new_list():
         my_list: State[NumbaList] = create_new_list(int)
     """
-
-    pass
 
 
 class NumbaDict(Generic[K, V]):
@@ -76,8 +72,6 @@ class NumbaDict(Generic[K, V]):
     For state variables, use State[NumbaDict] with create_new_dict():
         my_dict: State[NumbaDict] = create_new_dict(int, int)
     """
-
-    pass
 
 
 def create_new_list(element_type: type) -> NumbaList:
@@ -215,7 +209,7 @@ class NumbaTypeRegistry:
         return cls.get_by_python_type(py_type) is not None
 
     @classmethod
-    def get_supported_type_names(cls) -> Dict[str, type]:
+    def get_supported_type_names(cls) -> dict[str, type]:
         """Get all registered type names for State[type] annotations."""
         return {
             info.type_name: info.python_type
@@ -263,7 +257,7 @@ class NumbaTypeRegistry:
 
     # Mapping from C++ type names (as returned by struct metadata) to numba type names
     # This is a static constant — not part of CompilationContext.
-    _CPP_TYPE_TO_NUMBA: dict[str, str] = {
+    _CPP_TYPE_TO_NUMBA: ClassVar[dict[str, str]] = {
         "BOOL": "int8",
         "INT8": "int8",
         "UINT8": "int8",

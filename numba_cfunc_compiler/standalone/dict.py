@@ -211,16 +211,15 @@ def standalone_dict_contains(typingctx, dict_ty, key_ty):
 @intrinsic
 def standalone_dict_insert(typingctx, dict_ty, key_ty, val_ty):
     """Insert a key-value pair into the dict."""
-    if isinstance(dict_ty, StandaloneDictType) and isinstance(key_ty, types.Integer):
-        if isinstance(val_ty, (types.Integer, types.Float)):
-            sig = types.int32(dict_ty, key_ty, val_ty)
+    if isinstance(dict_ty, StandaloneDictType) and isinstance(key_ty, types.Integer) and isinstance(val_ty, (types.Integer, types.Float)):
+        sig = types.int32(dict_ty, key_ty, val_ty)
 
-            def codegen(context, builder, signature, args):
-                dict_ptr, key, value = args
-                dt = signature.args[0]
-                return _call_dict_insert(builder, dict_ptr, key, value, dt.key_type, dt.value_type)
+        def codegen(context, builder, signature, args):
+            dict_ptr, key, value = args
+            dt = signature.args[0]
+            return _call_dict_insert(builder, dict_ptr, key, value, dt.key_type, dt.value_type)
 
-            return sig, codegen
+        return sig, codegen
 
 
 @intrinsic
@@ -313,23 +312,22 @@ def standalone_dict_from_voidptr(typingctx, voidptr_ty, key_type_ty, val_type_ty
     """
     Cast a voidptr (from state slot) to a typed StandaloneDictType.
     """
-    if voidptr_ty == types.voidptr:
-        if isinstance(key_type_ty, types.Literal) and isinstance(val_type_ty, types.Literal):
-            key_type_name = key_type_ty.literal_value
-            val_type_name = val_type_ty.literal_value
+    if voidptr_ty == types.voidptr and isinstance(key_type_ty, types.Literal) and isinstance(val_type_ty, types.Literal):
+        key_type_name = key_type_ty.literal_value
+        val_type_name = val_type_ty.literal_value
 
-            key_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_dict_key_types())
-            val_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_dict_value_types())
+        key_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_dict_key_types())
+        val_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_dict_value_types())
 
-            if key_type_name in key_map and val_type_name in val_map:
-                result_type = StandaloneDictType(key_map[key_type_name], val_map[val_type_name])
-                sig = result_type(voidptr_ty, key_type_ty, val_type_ty)
+        if key_type_name in key_map and val_type_name in val_map:
+            result_type = StandaloneDictType(key_map[key_type_name], val_map[val_type_name])
+            sig = result_type(voidptr_ty, key_type_ty, val_type_ty)
 
-                def codegen(context, builder, signature, args):
-                    [voidptr, _, _] = args
-                    return voidptr
+            def codegen(context, builder, signature, args):
+                [voidptr, _, _] = args
+                return voidptr
 
-                return sig, codegen
+            return sig, codegen
 
 
 @intrinsic
@@ -457,13 +455,12 @@ def overload_getitem_standalone_dict(d, key):
 @overload(operator.setitem)
 def overload_setitem_standalone_dict(d, key, value):
     """Overload d[key] = value for StandaloneDictType."""
-    if isinstance(d, StandaloneDictType) and isinstance(key, types.Integer):
-        if isinstance(value, (types.Integer, types.Float)):
+    if isinstance(d, StandaloneDictType) and isinstance(key, types.Integer) and isinstance(value, (types.Integer, types.Float)):
 
-            def impl(d, key, value):
-                standalone_dict_insert(d, key, value)
+        def impl(d, key, value):
+            standalone_dict_insert(d, key, value)
 
-            return impl
+        return impl
 
 
 @overload(operator.contains)

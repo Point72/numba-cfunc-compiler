@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextvars
-from typing import Any, Dict, List
+from typing import Any
 
 __all__ = ["CompilationContext"]
 
@@ -19,42 +19,42 @@ class CompilationContext:
 
     def __init__(self) -> None:
         # -- NumbaTypeRegistry state --
-        self.numba_types: List[Any] = []  # List[NumbaTypeInfo]
+        self.numba_types: list[Any] = []  # List[NumbaTypeInfo]
         self.list_element_types: tuple[type, ...] = (int, float, bool)
         self.dict_key_types: tuple[type, ...] = (int,)
         self.dict_value_types: tuple[type, ...] = (int, float, bool)
 
         # -- TypeFactory state --
-        self.type_classes: List[Any] = []  # List[Type[VariableType]]
+        self.type_classes: list[Any] = []  # List[Type[VariableType]]
 
         # -- FunctionAnalyzer state --
-        self.input_handlers: List[Any] = []  # List[InputTypeHandler]
-        self.output_handlers: List[Any] = []  # List[OutputTypeHandler]
+        self.input_handlers: list[Any] = []  # List[InputTypeHandler]
+        self.output_handlers: list[Any] = []  # List[OutputTypeHandler]
 
         # -- ASTHandlerRegistry state --
-        self.ast_handlers: Dict[str, Dict[Any, list]] = {}
+        self.ast_handlers: dict[str, dict[Any, list]] = {}
 
         # -- NumbaTypeInference state --
-        self.assignment_handlers: List[Any] = []
-        self.call_handlers: List[Any] = []
-        self.attr_accessors: List[Any] = []
-        self.attr_lowerers: List[Any] = []
+        self.assignment_handlers: list[Any] = []
+        self.call_handlers: list[Any] = []
+        self.attr_accessors: list[Any] = []
+        self.attr_lowerers: list[Any] = []
 
         # -- FFIMethodHelper state --
-        self.ffi_opcode_cache: Dict[str, int] = {}
+        self.ffi_opcode_cache: dict[str, int] = {}
         self.ffi_next_opcode: int = 1
 
         # -- SourceCategory state --
-        self.source_categories: List[Any] = []  # List[SourceCategory]
+        self.source_categories: list[Any] = []  # List[SourceCategory]
 
         # -- NRT library --
         self._nrt_loaded: bool = False
 
-    def __enter__(self) -> CompilationContext:
+    def __enter__(self) -> CompilationContext:  # noqa: PYI034 - avoid adding a Python 3.10 backport dependency
         self._token = _current_context.set(self)
         return self
 
-    def __exit__(self, *exc: Any) -> None:
+    def __exit__(self, *exc: object) -> None:
         _current_context.reset(self._token)
 
     @staticmethod

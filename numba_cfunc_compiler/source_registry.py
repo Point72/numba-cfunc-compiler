@@ -4,16 +4,16 @@ import ast
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, List
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from numba_cfunc_compiler.variable_factory import VariableFactory
 
 __all__ = [
-    "SourceCategoryId",
-    "SourceInitFilter",
     "CfuncParam",
     "SourceCategory",
+    "SourceCategoryId",
+    "SourceInitFilter",
     "SourceRegistry",
     "register_default_categories",
 ]
@@ -65,7 +65,7 @@ class SourceCategory(ABC):
         ...
 
     @property
-    def cfunc_params(self) -> List[CfuncParam]:
+    def cfunc_params(self) -> list[CfuncParam]:
         """Cfunc parameters this category contributes. Default: none."""
         return []
 
@@ -80,7 +80,7 @@ class SourceCategory(ABC):
         return SourceInitFilter.ON_EXECUTE
 
     @abstractmethod
-    def create_variables(self, info: Any, factory: "VariableFactory") -> None:
+    def create_variables(self, info: Any, factory: VariableFactory) -> None:
         """Create :class:`VariableSource` instances and add them to *factory*."""
         ...
 
@@ -103,7 +103,7 @@ class SourceRegistry:
         ctx.source_categories.append(category)
 
     @classmethod
-    def get_ordered(cls) -> List[SourceCategory]:
+    def get_ordered(cls) -> list[SourceCategory]:
         from numba_cfunc_compiler.compilation_context import CompilationContext
 
         return sorted(
@@ -112,9 +112,9 @@ class SourceRegistry:
         )
 
     @classmethod
-    def build_cfunc_params(cls) -> List[CfuncParam]:
+    def build_cfunc_params(cls) -> list[CfuncParam]:
         """Flat list of all cfunc parameters, in category order."""
-        params: List[CfuncParam] = []
+        params: list[CfuncParam] = []
         for cat in cls.get_ordered():
             params.extend(cat.cfunc_params)
         return params
@@ -126,7 +126,7 @@ class SourceRegistry:
         return f'"void({param_types})"'
 
     @classmethod
-    def build_func_args(cls) -> List[ast.arg]:
+    def build_func_args(cls) -> list[ast.arg]:
         return [ast.arg(arg=p.name, annotation=None) for p in cls.build_cfunc_params()]
 
 

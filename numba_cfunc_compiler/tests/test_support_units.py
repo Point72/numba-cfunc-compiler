@@ -3,6 +3,7 @@ import inspect
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from llvmlite import ir
@@ -91,7 +92,7 @@ def test_datetime_and_timedelta_helpers_parse_and_lower():
 
     assert DateTimeType.to_nanos(aware) == int(aware.timestamp() * 1e9)
     with pytest.raises(TypeError, match="timezone-aware"):
-        DateTimeType.to_nanos(datetime(2020, 1, 1))
+        DateTimeType.to_nanos(datetime(2020, 1, 1))  # noqa: DTZ001 - verifies naive datetime rejection
     assert TimeDeltaType.to_nanos(delta) == int(delta.total_seconds() * 1e9)
 
     assert DateTimeType.from_type(datetime, UnknownNumbaValue()).value is datetime
@@ -402,7 +403,7 @@ def test_struct_type_and_attribute_helpers():
                 return ast.Name(id="dynamic_order", ctx=ast.Load())
 
         class Container:
-            key_to_child_name = {0: "order"}
+            key_to_child_name: ClassVar[dict[int, str]] = {0: "order"}
             element_type = struct_type
 
             def create_dynamic_access(self, index, variable_factory):
@@ -653,8 +654,8 @@ def test_variable_sources_and_factory_paths():
         assert isinstance(literal, LocalConstantSource)
 
         class FakeContainer:
-            key_to_child_name = {"a": "child"}
-            _idx_to_key = {0: "a"}
+            key_to_child_name: ClassVar[dict[str, str]] = {"a": "child"}
+            _idx_to_key: ClassVar[dict[int, str]] = {0: "a"}
 
             def get_key_index(self, key):
                 return 0
@@ -749,7 +750,6 @@ def test_ast_handler_registry_and_decorator_wrapper():
 
         def first(converter, node):
             calls.append("first")
-            return None
 
         def second(converter, node):
             calls.append("second")

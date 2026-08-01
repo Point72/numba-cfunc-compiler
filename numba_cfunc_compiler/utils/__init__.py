@@ -7,9 +7,9 @@ from numba_cfunc_compiler.utils.types import TypeHelper
 
 __all__ = [
     "AST",
-    "print_ast",
-    "add_statement_to_list",
     "FFIMethodHelper",
-    "TypeHelper",
     "StructHelper",
+    "TypeHelper",
+    "add_statement_to_list",
+    "print_ast",
 ]

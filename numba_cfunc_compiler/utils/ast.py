@@ -1,6 +1,5 @@
 import ast
 import logging
-from typing import List, Union
 
 from llvmlite import ir
 from numba import TypingError, types
@@ -12,9 +11,9 @@ from numba_cfunc_compiler.numba_config import (
 )
 
 __all__ = [
-    "print_ast",
-    "add_statement_to_list",
     "AST",
+    "add_statement_to_list",
+    "print_ast",
 ]
 
 log = logging.getLogger("numba_cfunc_compiler")
@@ -27,7 +26,7 @@ def print_ast(value) -> None:
     log.info(src)
 
 
-def add_statement_to_list(node_list: List[ast.stmt], node: Union[ast.stmt, List[ast.stmt], None]) -> None:
+def add_statement_to_list(node_list: list[ast.stmt], node: ast.stmt | list[ast.stmt] | None) -> None:
     if isinstance(node, list):
         node_list.extend(node)
     elif node is not None:
@@ -77,7 +76,7 @@ class AST:
         return AST.function_call("cast_voidptr_to_ptr", var_name_ptr, ast.Constant(value=numba_type_name))
 
     @staticmethod
-    def set_output(variable_factory, visitor, name_node, value_node) -> List[ast.stmt]:
+    def set_output(variable_factory, visitor, name_node, value_node) -> list[ast.stmt]:
         """Lower set_output(name, value) into output write + tick statements.
 
         Only named outputs are supported. The first argument must be a string constant
@@ -102,7 +101,7 @@ class AST:
             raise TypeError(f"{name} is not a declared output")
         idx = output_var.array_idx
 
-        statements: List[ast.stmt] = []
+        statements: list[ast.stmt] = []
         # Lower the value expression into a local variable if needed, using factory helpers
         var = variable_factory.from_ast(visitor=visitor, ast_node=value_node, statements=statements)
         value_expr = var.get()

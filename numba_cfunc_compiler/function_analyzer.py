@@ -2,8 +2,6 @@ import ast
 import inspect
 from typing import (
     Any,
-    Dict,
-    Optional,
     Protocol,
     runtime_checkable,
 )
@@ -20,9 +18,9 @@ from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
 
 __all__ = [
+    "FunctionAnalyzer",
     "InputTypeHandler",
     "OutputTypeHandler",
-    "FunctionAnalyzer",
 ]
 
 
@@ -30,7 +28,7 @@ __all__ = [
 class InputTypeHandler(Protocol):
     """Protocol for input type handlers that parse signal-related input patterns."""
 
-    def try_parse(self, param: inspect.Parameter, ann: Any) -> Optional[ParameterInfo]:
+    def try_parse(self, param: inspect.Parameter, ann: Any) -> ParameterInfo | None:
         """Try to parse the annotation. Returns ParameterInfo if handled, None otherwise."""
         ...
 
@@ -43,7 +41,7 @@ class InputTypeHandler(Protocol):
 class OutputTypeHandler(Protocol):
     """Protocol for output type handlers that parse return type annotations."""
 
-    def try_parse(self, return_annotation: Any, ast_tree: ast.AST) -> Optional[OutputAnalysis]:
+    def try_parse(self, return_annotation: Any, ast_tree: ast.AST) -> OutputAnalysis | None:
         """Try to parse the return annotation. Returns OutputAnalysis if handled, None otherwise."""
         ...
 
@@ -95,7 +93,7 @@ class FunctionAnalyzer:
         Reject nested def / async def / class inside the decorated
         function body.
         """
-        outer_fn: Optional[ast.AST] = None
+        outer_fn: ast.AST | None = None
         for node in ast.iter_child_nodes(ast_tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 outer_fn = node
@@ -123,7 +121,7 @@ class FunctionAnalyzer:
                     f"definitions — move {inner_name!r} to module scope."
                 )
 
-    def parse_input_annotation(self, sig: inspect.Signature, args_by_name: Dict[str, Any]) -> InputAnalysis:
+    def parse_input_annotation(self, sig: inspect.Signature, args_by_name: dict[str, Any]) -> InputAnalysis:
         """Parse and validate input parameters.
 
         Returns an InputAnalysis with parameters stored by name.
@@ -152,8 +150,8 @@ class FunctionAnalyzer:
                 validated_value = type_class.validate_input(param_name, value, param_info.expected_type)
             else:
                 # Fall back to registered input handlers
-                matched_handler: Optional[InputTypeHandler] = None
-                param_info: Optional[ParameterInfo] = None
+                matched_handler: InputTypeHandler | None = None
+                param_info: ParameterInfo | None = None
 
                 for handler in self.input_handlers:
                     param_info = handler.try_parse(param, ann)
@@ -172,7 +170,7 @@ class FunctionAnalyzer:
         return result
 
     def parse_state_annotation(self, ast_tree: ast.AST, globalns: dict) -> StateAnalysis:
-        state_vars: Dict[str, StateVariableInfo] = {}
+        state_vars: dict[str, StateVariableInfo] = {}
 
         for node in ast.walk(ast_tree):
             if not isinstance(node, ast.AnnAssign) or not node.annotation:

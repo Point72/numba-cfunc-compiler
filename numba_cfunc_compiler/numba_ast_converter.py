@@ -1,5 +1,4 @@
 import ast
-from typing import List
 
 from numba_cfunc_compiler.defaults.struct_support import StructType
 from numba_cfunc_compiler.models import (
@@ -47,9 +46,9 @@ class NumbaASTConverter(ast.NodeTransformer):
         self,
         tree: ast.AST,
         variable_factory: VariableFactory,
-        start_body: List[ast.AST] = None,
-        stop_body: List[ast.AST] = None,
-        call_globals: dict = None,
+        start_body: list[ast.AST] | None = None,
+        stop_body: list[ast.AST] | None = None,
+        call_globals: dict | None = None,
     ):
         self.tree = tree
         self.variable_factory = variable_factory
@@ -182,10 +181,9 @@ class NumbaASTConverter(ast.NodeTransformer):
         for i, elt in enumerate(elements):
             output_var = self.variable_factory.get_output_by_idx(i)
 
-            if isinstance(elt, ast.Name):
-                # if we return None, do nothing
-                if elt.id == "None":
-                    continue
+            # if we return None, do nothing
+            if isinstance(elt, ast.Name) and elt.id == "None":
+                continue
 
             # get or create a local variable for the return value
             var = self.variable_factory.from_ast(visitor=self, ast_node=elt, statements=statements)
@@ -213,12 +211,11 @@ class NumbaASTConverter(ast.NodeTransformer):
     @with_handlers("Expr")
     def visit_Expr(self, node):
         # Lower helper set_output(name, value) when used as a standalone statement
-        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-            if node.value.func.id == "set_output":
-                if len(node.value.args) != 2:
-                    invalid_call_str = ast.unparse(node.value)
-                    raise ValueError(f"set_output expects exactly 2 arguments: (name, value) got {invalid_call_str}")
-                return AST.set_output(self.variable_factory, self, node.value.args[0], node.value.args[1])
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "set_output":
+            if len(node.value.args) != 2:
+                invalid_call_str = ast.unparse(node.value)
+                raise ValueError(f"set_output expects exactly 2 arguments: (name, value) got {invalid_call_str}")
+            return AST.set_output(self.variable_factory, self, node.value.args[0], node.value.args[1])
         return self.generic_visit(node)
 
     @with_handlers("Subscript")

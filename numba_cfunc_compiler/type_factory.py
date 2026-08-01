@@ -1,6 +1,6 @@
 import ast
 import inspect
-from typing import Any, Optional, Tuple, Type
+from typing import Any
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.models import (
@@ -22,7 +22,7 @@ class TypeFactory:
     """Factory for creating VariableType instances. Types are tried in registration order."""
 
     @classmethod
-    def register(cls, type_class: Type[VariableType], priority: Optional[int] = None) -> None:
+    def register(cls, type_class: type[VariableType], priority: int | None = None) -> None:
         """Register a type class. Lower priority = tried first."""
         tc = CompilationContext.current().type_classes
         if priority is None:
@@ -62,7 +62,7 @@ class TypeFactory:
         raise ValueError(f"No registered type class supports type: {var_type}")
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> Optional[tuple[list, VariableType]]:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, VariableType] | None:
         """Try to lower/transform an assignment by querying registered type classes."""
         for type_class in CompilationContext.current().type_classes:
             result = type_class.try_lower_assignment(node, rhs, call_globals)
@@ -71,7 +71,7 @@ class TypeFactory:
         return None
 
     @classmethod
-    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> Optional[Tuple[Type[VariableType], ParameterInfo]]:
+    def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> tuple[type[VariableType], ParameterInfo] | None:
         for type_class in CompilationContext.current().type_classes:
             result = type_class.try_parse_input(param, ann)
             if result is not None:
@@ -79,7 +79,7 @@ class TypeFactory:
         return None
 
     @classmethod
-    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> Optional[StateVariableInfo]:
+    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:
         for type_class in CompilationContext.current().type_classes:
             result = type_class.try_parse_state(node, var_name, globalns)
             if result is not None:

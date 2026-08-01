@@ -1,7 +1,7 @@
 """FFI (Foreign Function Interface) utilities."""
 
 import ast
-from typing import Any, List, Optional
+from typing import Any
 
 from llvmlite import ir
 from numba import types
@@ -54,7 +54,7 @@ class FFIMethodHelper:
         return node
 
     @staticmethod
-    def ffi_call(return_type, obj_ptr, method_name: str, args: Optional[list] = None) -> ast.Call:
+    def ffi_call(return_type, obj_ptr, method_name: str, args: list | None = None) -> ast.Call:
         from numba_cfunc_compiler.utils.ast import AST
 
         if args is None:
@@ -74,7 +74,7 @@ class FFIMethodHelper:
         return AST.function_call("ffi_tuple_args", *ast_args)
 
     @staticmethod
-    def _numba_to_llvm_type(numba_type) -> Optional[Any]:
+    def _numba_to_llvm_type(numba_type) -> Any | None:
         """Translate a Numba type to an llvmlite.ir type. Returns None for unsupported/literal string types."""
         NUMBA_TO_LLVM_TYPE = {
             types.int64: ir.IntType(64),
@@ -138,7 +138,7 @@ class FFIMethodHelper:
         return builder.call(func, dyn_args)
 
     @staticmethod
-    def register_ffi_symbols(symbol_names: List[str], library_module) -> None:
+    def register_ffi_symbols(symbol_names: list[str], library_module) -> None:
         """Register FFI symbols from a shared library with LLVM.
 
         Args:
@@ -160,7 +160,7 @@ class FFIMethodHelper:
                         llvm.add_symbol(sym, addr)
                     else:
                         raise RuntimeError(f"Failed to register FFI symbol: {sym}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - preserve symbol context for backend errors
                     raise RuntimeError(f"Failed to register FFI symbol: {sym} {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - normalize loader and backend errors
             raise RuntimeError(f"Failed to register FFI symbols: {e}")
