@@ -32,6 +32,9 @@ class NumbaListType(ContainerType):
     def _to_voidptr_func_name(self) -> str:
         return "standalone_list_to_voidptr"
 
+    def _free_func_name(self) -> str:
+        return "standalone_list_free"
+
     def _elem_type_name(self) -> str:
         return NumbaTypeRegistry.resolve_numba_name(self.value.element_type)
 

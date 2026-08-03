@@ -2,6 +2,7 @@
 
 from numba_cfunc_compiler.standalone.dict import (
     StandaloneDictType,
+    standalone_dict_free,
     standalone_dict_from_voidptr,
     standalone_dict_length,
     standalone_dict_new,
@@ -9,6 +10,7 @@ from numba_cfunc_compiler.standalone.dict import (
 )
 from numba_cfunc_compiler.standalone.list import (
     StandaloneListType,
+    standalone_list_free,
     standalone_list_from_voidptr,
     standalone_list_length,
     standalone_list_new,
@@ -20,10 +22,12 @@ __all__ = [
     "StandaloneDictType",
     # List
     "StandaloneListType",
+    "standalone_dict_free",
     "standalone_dict_from_voidptr",
     "standalone_dict_length",
     "standalone_dict_new",
     "standalone_dict_to_voidptr",
+    "standalone_list_free",
     "standalone_list_from_voidptr",
     "standalone_list_length",
     "standalone_list_new",

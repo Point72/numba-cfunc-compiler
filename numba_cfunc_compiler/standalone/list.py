@@ -187,6 +187,22 @@ def standalone_list_new(typingctx, item_size_ty, allocated_ty):
 
 
 @intrinsic
+def standalone_list_free(typingctx, lst_ty):
+    """Release an NB_List allocated by :func:`standalone_list_new`."""
+    if isinstance(lst_ty, StandaloneListType):
+        sig = types.void(lst_ty)
+
+        def codegen(context, builder, signature, args):
+            [lst_ptr] = args
+            fnty = ir.FunctionType(ir.VoidType(), [i8ptr()])
+            fn = get_or_declare_function(builder.module, "numba_list_free", fnty)
+            builder.call(fn, [lst_ptr])
+            return context.get_dummy_value()
+
+        return sig, codegen
+
+
+@intrinsic
 def standalone_list_length(typingctx, lst_ty):
     """
     Get the length of a StandaloneList.
