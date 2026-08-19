@@ -91,10 +91,7 @@ class PrimitiveType(VariableType):
         if state_type is float and initial_type is int:
             initial_value = float(initial_value)
         elif initial_type is not state_type:
-            raise TypeError(
-                f"State '{var_name}' expected an initial value of type "
-                f"{state_type.__name__}, got {initial_type.__name__}"
-            )
+            raise TypeError(f"State '{var_name}' expected an initial value of type {state_type.__name__}, got {initial_type.__name__}")
 
         return StateVariableInfo(var_name, initial_value, state_type)
 
