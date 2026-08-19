@@ -81,7 +81,22 @@ class PrimitiveType(VariableType):
         if not isinstance(node.value, ast.Constant):
             raise TypeError(f"State '{var_name}' must have a literal initial value")
 
-        return StateVariableInfo(var_name, node.value.value, state_type)
+        initial_value = node.value.value
+        initial_type = type(initial_value)
+
+        # State storage is allocated by the host from the concrete Python value,
+        # while generated code reads it using the declared State type. Keep those
+        # representations identical, allowing only the safe numeric widening that
+        # is already supported for inputs.
+        if state_type is float and initial_type is int:
+            initial_value = float(initial_value)
+        elif initial_type is not state_type:
+            raise TypeError(
+                f"State '{var_name}' expected an initial value of type "
+                f"{state_type.__name__}, got {initial_type.__name__}"
+            )
+
+        return StateVariableInfo(var_name, initial_value, state_type)
 
 
 def register():
