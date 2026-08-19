@@ -475,6 +475,11 @@ def test_models_type_factory_registry_and_source_registry():
         assert TypeFactory.try_parse_input(param, int)[1] == ParameterInfo(int)
         assert TypeFactory.try_parse_input(param, str) is None
         assert TypeFactory.try_parse_state(parse_stmt("x: State[int] = 1"), "x", {}) == StateVariableInfo("x", 1, int)
+        assert TypeFactory.try_parse_state(parse_stmt("x: State[float] = 1"), "x", {}) == StateVariableInfo("x", 1.0, float)
+        assert TypeFactory.try_parse_state(parse_stmt("x: State[bool] = True"), "x", {}) == StateVariableInfo("x", True, bool)
+        for annotation, value in (("int", "1.0"), ("int", "True"), ("float", "True"), ("bool", "1")):
+            with pytest.raises(TypeError, match=f"expected an initial value of type {annotation}"):
+                TypeFactory.try_parse_state(parse_stmt(f"x: State[{annotation}] = {value}"), "x", {})
         assert TypeFactory.try_parse_state(parse_stmt("x: State[str] = 'a'"), "x", {}) is None
 
         int_info = NumbaTypeRegistry.get_by_python_type(int)

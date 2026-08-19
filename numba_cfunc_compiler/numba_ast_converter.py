@@ -1,4 +1,5 @@
 import ast
+import copy
 
 from numba_cfunc_compiler.defaults.struct_support import StructType
 from numba_cfunc_compiler.models import (
@@ -118,7 +119,12 @@ class NumbaASTConverter(ast.NodeTransformer):
 
             # Prepend container loading to execution_body
             container_load = ContainerType.emit_container_state_load(container_state_vars)
-            execution_body = container_load + execution_body
+            execution_body = copy.deepcopy(container_load) + execution_body
+
+            # STOP needs typed container values for user cleanup code, then must
+            # release the native allocations before the host drops its slots.
+            container_free = ContainerType.emit_container_state_free(container_state_vars)
+            transformed_stop_body = container_load + transformed_stop_body + container_free
 
         # Build the lifecycle-aware body
         lifecycle_body = []
