@@ -34,6 +34,8 @@ jobs:
           - version: "3.10"
             cibuildwheel: "cp310"
             primary: true
+          - version: "3.14"
+            primary: false
 
     steps:
       - name: Checkout
@@ -83,6 +85,7 @@ jobs:
 
       - name: Install build dependencies
         run: pip install cibuildwheel
+        if: matrix.python.primary
 
       - name: Build distributions (Linux)
         run: |
@@ -93,7 +96,7 @@ jobs:
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-manylinux*"
           CIBW_BUILD_VERBOSITY: 3
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
 
       - name: Build distributions (macOS)
         run: |
@@ -102,7 +105,7 @@ jobs:
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-macos*"
           CIBW_BUILD_VERBOSITY: 3
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && matrix.python.primary
 
       - name: Build distributions (Windows)
         run: |
@@ -110,22 +113,23 @@ jobs:
           make dist-py-wheel
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-win_amd64"
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.python.primary
 
       - name: Test wheel
         uses: actions-ext/python/test-wheel@6e1b91a408ea89f49bc8aff8724f83826f7b5446
         with:
           module: numba_cfunc_compiler
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
 
       - name: Test source distribution
         uses: actions-ext/python/test-sdist@6e1b91a408ea89f49bc8aff8724f83826f7b5446
         with:
           module: numba_cfunc_compiler
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
 
       - name: Upload distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist-${{ matrix.os }}-${{ matrix.python.version }}
           path: dist
+        if: matrix.python.primary
