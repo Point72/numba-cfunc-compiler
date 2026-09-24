@@ -39,6 +39,7 @@ class FFIMethodHelper:
     def get_return_type(numba_type) -> ast.AST:
         """Hacky way of specifying the return type for an ffi call"""
         from numba_cfunc_compiler.utils.ast import AST
+        from numba_cfunc_compiler.utils.enumset import enumset_type
 
         mapping = {
             types.float64: ast.Constant(value=1.0),
@@ -47,11 +48,24 @@ class FFIMethodHelper:
             types.voidptr: AST.function_call("voidptr_null"),
             # if the ffi function returns an Enum, it will be represented as an int8
             types.int8: AST.function_call("make_int8"),
+            enumset_type: AST.function_call("make_enumset"),
         }
         node = mapping.get(numba_type)
         if node is None:
             raise ValueError(f"Unsupported return type: {numba_type}")
         return node
+
+    @staticmethod
+    def resolve_return_type(return_type):
+        """Resolve an FFI return annotation, including registered custom value types."""
+        from numba_cfunc_compiler.models import UnknownType
+        from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
+        from numba_cfunc_compiler.type_factory import TypeFactory
+
+        variable_type = TypeFactory.get_type(return_type)
+        if not isinstance(variable_type, UnknownType):
+            return NumbaTypeRegistry.get_numba_type(variable_type.get_numba_type_name())
+        return NumbaTypeRegistry.resolve_to_numba_type(return_type)
 
     @staticmethod
     def ffi_call(return_type, obj_ptr, method_name: str, args: list | None = None) -> ast.Call:
@@ -76,6 +90,8 @@ class FFIMethodHelper:
     @staticmethod
     def _numba_to_llvm_type(numba_type) -> Any | None:
         """Translate a Numba type to an llvmlite.ir type. Returns None for unsupported/literal string types."""
+        from numba_cfunc_compiler.utils.enumset import enumset_type
+
         NUMBA_TO_LLVM_TYPE = {
             types.int64: ir.IntType(64),
             types.int32: ir.IntType(32),
@@ -84,9 +100,12 @@ class FFIMethodHelper:
             types.float32: ir.FloatType(),
             types.boolean: ir.IntType(8),
             types.voidptr: ir.IntType(8).as_pointer(),
-            types.CPointer: lambda x: x.dtype.as_pointer(),
+            enumset_type: ir.IntType(128),
         }
-        return NUMBA_TO_LLVM_TYPE.get(numba_type, None)
+        if isinstance(numba_type, types.CPointer):
+            dtype = FFIMethodHelper._numba_to_llvm_type(numba_type.dtype)
+            return dtype.as_pointer() if dtype is not None else None
+        return NUMBA_TO_LLVM_TYPE.get(numba_type)
 
     @staticmethod
     def numba_to_llvm_sig(numba_sig) -> ir.FunctionType:

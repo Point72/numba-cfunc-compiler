@@ -35,6 +35,7 @@ from numba_cfunc_compiler.standalone.list import (
     standalone_list_to_voidptr,
 )
 from numba_cfunc_compiler.utils.ast import AST
+from numba_cfunc_compiler.utils.enumset import make_enumset
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 from numba_cfunc_compiler.utils.struct import StructHelper
 from numba_cfunc_compiler.variable_factory import (
@@ -263,6 +264,7 @@ def create_compiled_func(
             "ffi_tuple_args": AST.ffi_tuple_args,
             "cast_voidptr_to_int": AST.cast_voidptr_to_int,
             "make_int8": AST.make_int8,
+            "make_enumset": make_enumset,
             "ffi_call": FFIMethodHelper.ffi_call,
             "voidptr_to_intp": AST.voidptr_to_intp,
             # standalone list (NRT-free)

@@ -16,6 +16,7 @@ from numba_cfunc_compiler.models import (
 )
 from numba_cfunc_compiler.numba_config import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.utils.enumset import enumset_type
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,16 @@ def register():
             numba_name="voidptr",
             numba_type=numba_types.voidptr,
             size=8,
+            is_numeric=False,
+            is_primitive=False,
+        )
+    )
+    NumbaTypeRegistry.register_type(
+        NumbaTypeInfo(
+            python_type=None,
+            numba_name="enumset",
+            numba_type=enumset_type,
+            size=16,
             is_numeric=False,
             is_primitive=False,
         )
