@@ -7,6 +7,7 @@ from numba_cfunc_compiler.models import (
     NoneType,
     UnknownType,
 )
+from numba_cfunc_compiler.numba_methods import NumbaMethodManager
 from numba_cfunc_compiler.numba_type_inference import (
     NumbaTypeInference,
 )
@@ -47,6 +48,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self,
         tree: ast.AST,
         variable_factory: VariableFactory,
+        method_manager: NumbaMethodManager,
         start_body: list[ast.AST] | None = None,
         stop_body: list[ast.AST] | None = None,
         call_globals: dict | None = None,
@@ -58,6 +60,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.numba_type_inference = NumbaTypeInference(variable_factory, self.call_globals)
         self.start_body = start_body or []
         self.stop_body = stop_body or []
+        self.method_manager = method_manager
 
     def visit_FunctionDef(self, node):
         from numba_cfunc_compiler.compiler_constants import (
@@ -207,6 +210,9 @@ class NumbaASTConverter(ast.NodeTransformer):
 
     @with_handlers("Call")
     def visit_Call(self, node):
+        lowered = self.method_manager.rewrite_call(node, self)
+        if lowered is not None:
+            return self.generic_visit(lowered)
         if isinstance(node.func, ast.Attribute):
             final_var = self.numba_type_inference.handle_call_chain(node)
             if final_var is not None:
@@ -326,3 +332,28 @@ class NumbaASTConverter(ast.NodeTransformer):
             return None
 
         return self.generic_visit(node)
+
+
+class NumbaMethodASTConverter(NumbaASTConverter):
+    """Apply registered body lowerers while retaining a method's Python ABI."""
+
+    def visit_FunctionDef(self, node):
+        body = []
+        for statement in node.body:
+            add_statement_to_list(body, self.visit(statement))
+        node.body = body
+        ast.fix_missing_locations(node)
+        return node
+
+    def visit_Return(self, node):
+        return self.generic_visit(node)
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Store):
+            return node
+        return super().visit_Name(node)
+
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "set_output":
+            raise TypeError("@numba_method helpers cannot emit node outputs")
+        return super().visit_Expr(node)

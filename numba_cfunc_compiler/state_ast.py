@@ -6,6 +6,7 @@ __all__ = [
     "append_state_values_to_return",
     "inject_state_params",
     "is_state_annotation",
+    "is_state_type_annotation",
     "state_annotation_target",
 ]
 
@@ -13,15 +14,14 @@ __all__ = [
 STATE_ANNOTATION_NAME = "State"
 
 
+def is_state_type_annotation(node: ast.AST) -> bool:
+    """True if ``node`` is a ``State[...]`` type annotation."""
+    return isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == STATE_ANNOTATION_NAME
+
+
 def is_state_annotation(node: ast.AST) -> bool:
-    """True if ``node`` is a ``State[...]: var = ...`` annotated assignment."""
-    return (
-        isinstance(node, ast.AnnAssign)
-        and isinstance(node.annotation, ast.Subscript)
-        and isinstance(node.annotation.value, ast.Name)
-        and node.annotation.value.id == STATE_ANNOTATION_NAME
-        and isinstance(node.target, ast.Name)
-    )
+    """True if ``node`` is a ``State[...]`` assignment to a simple name."""
+    return isinstance(node, ast.AnnAssign) and is_state_type_annotation(node.annotation) and isinstance(node.target, ast.Name)
 
 
 def state_annotation_target(node: ast.AnnAssign) -> str:

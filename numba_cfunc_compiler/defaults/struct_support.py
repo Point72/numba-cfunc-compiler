@@ -246,3 +246,4 @@ def register():
     from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 
     NumbaTypeInference.register_attr_accessor(struct_attr_handler)
+    NumbaTypeInference.register_attr_lowerer(struct_attribute_transformer)

@@ -7,6 +7,13 @@ from numba.core import types
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.defaults import register_all
+from numba_cfunc_compiler.function_analyzer import FunctionAnalyzer
+from numba_cfunc_compiler.numba_methods import (
+    _is_numba_method,
+    _method_options,
+    _validate_helper_ast,
+    numba_method,
+)
 from numba_cfunc_compiler.output_utils import (
     collect_return_nodes,
     parse_annotated_metadata_dict,
@@ -40,6 +47,7 @@ from numba_cfunc_compiler.state_ast import (
     append_state_values_to_return,
     inject_state_params,
     is_state_annotation,
+    is_state_type_annotation,
     state_annotation_target,
 )
 
@@ -47,6 +55,15 @@ from numba_cfunc_compiler.state_ast import (
 def unparse(node: ast.AST) -> str:
     ast.fix_missing_locations(node)
     return ast.unparse(node)
+
+
+@numba_method
+def _inline_plus_one(value):
+    return value + 1
+
+
+def _plain_helper(value):
+    return value
 
 
 def make_builder():
@@ -92,11 +109,46 @@ def f(x):
         parse_annotated_metadata_dict(Annotated[SignalSet, ("bad",)], SignalSet, "SignalSet", "example")
 
 
-def test_state_ast_rewrites():
+def test_numba_method_registration_and_source_validation(monkeypatch):
+    assert _inline_plus_one(2) == 3
+    assert numba_method(_inline_plus_one) is _inline_plus_one
+    assert numba_method(force_inline=True)(_inline_plus_one) is _inline_plus_one
+    assert _is_numba_method(_inline_plus_one)
+    assert _method_options(_inline_plus_one).force_inline is True
+    assert not _is_numba_method(_plain_helper)
+    with pytest.raises(TypeError, match="Python function"):
+        numba_method(3)
+    with pytest.raises(TypeError, match="force_inline must be a bool"):
+        numba_method(force_inline=1)
+    with pytest.raises(TypeError, match="cannot change force_inline"):
+        numba_method(force_inline=False)(_inline_plus_one)
+
+    with pytest.raises(TypeError, match="Unable to inspect"):
+        FunctionAnalyzer.parse_function_source(len)
+    monkeypatch.setattr("numba_cfunc_compiler.function_analyzer.inspect.getsource", lambda _: "def first(): pass\ndef second(): pass")
+    with pytest.raises(TypeError, match="Unable to identify"):
+        FunctionAnalyzer.parse_function_source(_inline_plus_one)
+
+    for source, message in [
+        ("def helper():\n    def nested(): pass", "nested functions"),
+        ("def helper():\n    class Nested: pass", "nested functions"),
+        ("def helper():\n    return lambda x: x", "nested scopes"),
+        ("def helper():\n    return [x for x in range(2)]", "nested scopes"),
+        ("def helper():\n    yield 1", "generator"),
+        ("def helper():\n    x: State[int] = 0", "cannot declare State"),
+        ("def helper(obj):\n    obj.field: State[int] = 0", "cannot declare State"),
+    ]:
+        with pytest.raises(TypeError, match=message):
+            _validate_helper_ast(_inline_plus_one, ast.parse(source).body[0])
+
+
+def test_state_ast_helpers_identify_and_rewrite_state_nodes():
     ann = ast.parse("state: State[int] = 1").body[0]
     assert is_state_annotation(ann)
+    assert is_state_type_annotation(ann.annotation)
     assert state_annotation_target(ann) == "state"
     assert not is_state_annotation(ast.parse("value: int = 1").body[0])
+    assert not is_state_annotation(ast.parse("obj.field: State[int] = 1").body[0])
     with pytest.raises(ValueError, match="not a State"):
         state_annotation_target(ast.parse("value: int = 1").body[0])
 

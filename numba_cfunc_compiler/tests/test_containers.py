@@ -13,6 +13,7 @@ downstream in consumers like csp.
 import unittest
 
 from numba_cfunc_compiler.node_api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
+from numba_cfunc_compiler.numba_methods import numba_method
 from numba_cfunc_compiler.tests.harness import CompiledNode, Signal, compile_function, numba_node
 
 # ---- Dict nodes -----------------------------------------------------------
@@ -72,6 +73,18 @@ def list_append_last(x: Signal[int]) -> Signal[int]:
     return xs[len(xs) - 1]
 
 
+@numba_method
+def append_and_get_length(values, value):
+    values.append(value)
+    return len(values)
+
+
+@numba_node
+def list_inline_append_len(x: Signal[int]) -> Signal[int]:
+    xs: State[NumbaList] = create_new_list(int)
+    return append_and_get_length(xs, x)
+
+
 class TestDictExecution(unittest.TestCase):
     def test_set_get_int(self):
         node = CompiledNode(compile_function(dict_set_get), input_types=[int, int]).start()
@@ -123,6 +136,11 @@ class TestListExecution(unittest.TestCase):
         node = CompiledNode(compile_function(list_append_last), input_types=[int]).start()
         self.assertEqual(node.execute([10])[0], 10)
         self.assertEqual(node.execute([20])[0], 20)
+
+    def test_inline_helper_mutates_explicit_container_state(self):
+        node = CompiledNode(compile_function(list_inline_append_len), input_types=[int]).start()
+        self.assertEqual(node.execute([10])[0], 1)
+        self.assertEqual(node.execute([20])[0], 2)
 
     def test_stop_frees_state(self):
         node = CompiledNode(compile_function(list_append_len), input_types=[int]).start()

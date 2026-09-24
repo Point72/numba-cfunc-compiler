@@ -14,6 +14,7 @@ from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.config import get_numba_config
 from numba_cfunc_compiler.function_analyzer import FunctionAnalyzer
 from numba_cfunc_compiler.numba_ast_converter import NumbaASTConverter
+from numba_cfunc_compiler.numba_methods import NumbaMethodManager
 from numba_cfunc_compiler.post_compilation import (
     CompilationOptions,
     apply_post_compilation,
@@ -87,11 +88,13 @@ def _build_semantic_key(
     new_func_code: str,
     cfunc_sig: str,
     cfunc_kwargs: str,
+    method_hashes: dict[str, str] | None = None,
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
         "cfunc_sig": cfunc_sig,
         "cfunc_kwargs": cfunc_kwargs,
+        "numba_methods": method_hashes or {},
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -222,6 +225,14 @@ def create_compiled_func(
     name = info.name
     variable_factory = info.variable_factory
 
+    helper_globals = dict(info._func_globals)
+    if call_globals:
+        helper_globals.update(call_globals)
+    if callable(info.func) and not isinstance(info.func, ast.FunctionDef):
+        helper_globals.update(inspect.getclosurevars(info.func).nonlocals)
+    FunctionAnalyzer.validate_no_global_shadowing(tree, helper_globals)
+    method_manager = NumbaMethodManager(tree, helper_globals)
+
     # Lazy-load the NRT C library on first compilation
     CompilationContext.current().ensure_nrt_loaded()
 
@@ -231,6 +242,7 @@ def create_compiled_func(
         start_body=start_body,
         stop_body=stop_body,
         call_globals=call_globals,
+        method_manager=method_manager,
     )
     new_tree = transformer.visit(tree)
     new_func_code = ast.unparse(new_tree)
@@ -239,54 +251,60 @@ def create_compiled_func(
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
-    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs)
+    semantic_key = _build_semantic_key(
+        new_func_code,
+        cfunc_sig,
+        cfunc_kwargs,
+        method_hashes=method_manager.lowered_helper_hashes,
+    )
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
 {new_func_code}
 """
 
+    compiler_globals = {
+        "cfunc": cfunc,
+        "CPointer": CPointer,
+        "int64": int64,
+        "int8": int8,
+        "float64": float64,
+        "voidptr": numba.types.voidptr,
+        "cast_voidptr_to_ptr": AST.cast_voidptr_to_ptr,
+        "struct_field_access": StructHelper.struct_field_access,
+        "struct_field_ptr": StructHelper.struct_field_ptr,
+        "struct_field_store": StructHelper.struct_field_store,
+        "struct_memcpy": StructHelper.struct_memcpy,
+        "voidptr_null": AST.voidptr_null,
+        "ffi_tuple_args": AST.ffi_tuple_args,
+        "cast_voidptr_to_int": AST.cast_voidptr_to_int,
+        "make_int8": AST.make_int8,
+        "make_enum": make_enum,
+        "make_enumset": make_enumset,
+        "ffi_call": FFIMethodHelper.ffi_call,
+        "voidptr_to_intp": AST.voidptr_to_intp,
+        # standalone list (NRT-free)
+        "standalone_list_new": standalone_list_new,
+        "standalone_list_from_voidptr": standalone_list_from_voidptr,
+        "standalone_list_free": standalone_list_free,
+        "standalone_list_to_voidptr": standalone_list_to_voidptr,
+        # standalone dict (NRT-free)
+        "standalone_dict_new": standalone_dict_new,
+        "standalone_dict_from_voidptr": standalone_dict_from_voidptr,
+        "standalone_dict_free": standalone_dict_free,
+        "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
+        "standalone_dict_length": standalone_dict_length,
+        "_standalone_dict_iter_begin": _standalone_dict_iter_begin,
+        "_standalone_dict_iter_next_item": _standalone_dict_iter_next_item,
+        "_standalone_dict_iter_next_key": _standalone_dict_iter_next_key,
+    }
+    lowered_helpers = method_manager.build_bindings(compiler_globals)
+
     exec_globals = {}
     exec_globals.update(globals())
     if call_globals:
         exec_globals.update(call_globals)
-
-    exec_globals.update(
-        {
-            "cfunc": cfunc,
-            "CPointer": CPointer,
-            "int64": int64,
-            "int8": int8,
-            "float64": float64,
-            "voidptr": numba.types.voidptr,
-            "cast_voidptr_to_ptr": AST.cast_voidptr_to_ptr,
-            "struct_field_access": StructHelper.struct_field_access,
-            "struct_field_ptr": StructHelper.struct_field_ptr,
-            "struct_field_store": StructHelper.struct_field_store,
-            "struct_memcpy": StructHelper.struct_memcpy,
-            "voidptr_null": AST.voidptr_null,
-            "ffi_tuple_args": AST.ffi_tuple_args,
-            "cast_voidptr_to_int": AST.cast_voidptr_to_int,
-            "make_int8": AST.make_int8,
-            "make_enum": make_enum,
-            "make_enumset": make_enumset,
-            "ffi_call": FFIMethodHelper.ffi_call,
-            "voidptr_to_intp": AST.voidptr_to_intp,
-            # standalone list (NRT-free)
-            "standalone_list_new": standalone_list_new,
-            "standalone_list_from_voidptr": standalone_list_from_voidptr,
-            "standalone_list_free": standalone_list_free,
-            "standalone_list_to_voidptr": standalone_list_to_voidptr,
-            # standalone dict (NRT-free)
-            "standalone_dict_new": standalone_dict_new,
-            "standalone_dict_from_voidptr": standalone_dict_from_voidptr,
-            "standalone_dict_free": standalone_dict_free,
-            "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
-            "standalone_dict_length": standalone_dict_length,
-            "_standalone_dict_iter_begin": _standalone_dict_iter_begin,
-            "_standalone_dict_iter_next_item": _standalone_dict_iter_next_item,
-            "_standalone_dict_iter_next_key": _standalone_dict_iter_next_key,
-        }
-    )
+    exec_globals.update(lowered_helpers)
+    exec_globals.update(compiler_globals)
     exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
 
     compiled_func = exec_globals[name]

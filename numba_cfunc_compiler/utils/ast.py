@@ -45,7 +45,7 @@ class AST:
     def function_call(name: str, *args) -> ast.Call:
         return ast.Call(
             func=ast.Name(id=name, ctx=ast.Load()),
-            args=args,
+            args=list(args),
             keywords=[],
         )
 

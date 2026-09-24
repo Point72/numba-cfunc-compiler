@@ -316,6 +316,51 @@ Registered by `defaults.register_all()`:
 - **NumbaDict** — Standalone typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Created with `create_new_dict(int, float)`.
 - **Structs** — Opaque void pointers with field metadata. Read/write fields via pointer arithmetic. Base `StructType` must be subclassed with `is_type_supported()`, `_get_struct_fields()`, `_get_struct_size()`.
 
+## Numba Methods
+
+Use `@numba_method` for reusable, Numba-native logic called by a compiled node:
+
+```python
+from numba_cfunc_compiler.node_api import State
+from numba_cfunc_compiler.numba_methods import numba_method
+
+@numba_method
+def ema_step(previous: float, value: float, alpha: float) -> float:
+    return alpha * value + (1.0 - alpha) * previous
+
+@numba_node
+def ema(value: Signal[float], alpha: float) -> Signal[float]:
+    previous: State[float] = 0.0
+    previous = ema_step(previous, value, alpha)
+    return previous
+```
+
+Methods force Numba inlining by default. Use `@numba_method(force_inline=False)`
+to disable that request; LLVM may still inline the call during later optimization.
+This decorator option is separate from `CompilationOptions.force_inline`, which
+applies to the cfunc wrapper.
+Methods remain normal Python functions outside compiled nodes. They have
+ordinary independent local scopes. Pass node values and state
+explicitly; scalar state changes must be returned and assigned by the node.
+Passed standalone list/dict state may be mutated using their Numba-native
+operations.
+
+When compiling a node, helper bodies use the same registered type and AST
+handlers with their own local variable scope. Pass tracked, named variables
+with known compiler types as helper arguments; expressions such as
+`ema_step(previous + 1, value, alpha)` are not supported at the call site.
+Struct fields and registered type methods can then be lowered inside helpers.
+Helpers cannot declare `State`, emit node outputs, or implicitly capture node
+locals. Source-specific operations such as `ticked()`, `valid()`, and
+`set_output` must remain in the `numba_node`.
+Every helper argument must be passed explicitly. Helpers cannot use parameter
+defaults or read global and closure data; supply those values through node
+inputs, state, or compile-time constant parameters. Calls to other
+`@numba_method` helpers are allowed, including module-qualified calls. Enum and
+type names can be used when a registered AST lowerer replaces them completely
+before Numba compilation. Helpers cannot contain nested scopes such as lambdas
+or comprehensions.
+
 ## Compilation Options & Post-Compilation Transforms
 
 `CompilationOptions` controls compilation flags and post-compilation LLVM IR transforms. Pass it to `create_compiled_func` via the `options` parameter — all flags are opt-in.

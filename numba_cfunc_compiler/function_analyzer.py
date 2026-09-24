@@ -1,5 +1,6 @@
 import ast
 import inspect
+import textwrap
 from typing import (
     Any,
     Protocol,
@@ -14,6 +15,7 @@ from numba_cfunc_compiler.models import (
     StateAnalysis,
     StateVariableInfo,
 )
+from numba_cfunc_compiler.state_ast import STATE_ANNOTATION_NAME, is_state_type_annotation
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
@@ -72,18 +74,27 @@ class FunctionAnalyzer:
         self.output_handlers = ctx.output_handlers
 
     @staticmethod
-    def get_function_ast(func, decorator_name: str) -> ast.AST:
-        import textwrap
-
-        source = inspect.getsource(func)
-        func_source = textwrap.dedent(source)
-
-        lines = func_source.split("\n")
-        if decorator_name not in lines[0].strip():
-            raise ValueError(f"Expected {decorator_name}, got {lines[0].strip()}")
-        func_source = "\n".join(lines[1:])
-
+    def parse_function_source(func, decorator_name: str | None = None) -> ast.FunctionDef:
+        """Return the single function in source, optionally removing its node decorator."""
+        try:
+            func_source = textwrap.dedent(inspect.getsource(func))
+        except (OSError, TypeError) as exc:
+            raise TypeError(f"Unable to inspect function '{func.__qualname__}'") from exc
+        if decorator_name is not None:
+            lines = func_source.split("\n")
+            if decorator_name not in lines[0].strip():
+                raise ValueError(f"Expected {decorator_name}, got {lines[0].strip()}")
+            func_source = "\n".join(lines[1:])
         tree = ast.parse(func_source)
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if len(functions) != 1:
+            raise TypeError(f"Unable to identify function '{func.__qualname__}' in its source")
+        return functions[0]
+
+    @staticmethod
+    def get_function_ast(func, decorator_name: str) -> ast.Module:
+        function_node = FunctionAnalyzer.parse_function_source(func, decorator_name)
+        tree = ast.Module(body=[function_node], type_ignores=[])
         FunctionAnalyzer.validate_no_nested_scopes(tree, decorator_name)
         return tree
 
@@ -120,6 +131,10 @@ class FunctionAnalyzer:
                     f"{decorator_name} does not support nested function or class "
                     f"definitions — move {inner_name!r} to module scope."
                 )
+
+    @staticmethod
+    def validate_no_global_shadowing(ast_tree: ast.AST, globalns: dict[str, Any]) -> None:
+        """Placeholder for checking source references against local bindings."""
 
     def parse_input_annotation(self, sig: inspect.Signature, args_by_name: dict[str, Any]) -> InputAnalysis:
         """Parse and validate input parameters.
@@ -173,17 +188,16 @@ class FunctionAnalyzer:
         state_vars: dict[str, StateVariableInfo] = {}
 
         for node in ast.walk(ast_tree):
-            if not isinstance(node, ast.AnnAssign) or not node.annotation:
+            if not isinstance(node, ast.AnnAssign):
                 continue
 
             ann = node.annotation
+            if isinstance(ann, ast.Name) and ann.id == STATE_ANNOTATION_NAME:
+                var_name = node.target.id if isinstance(node.target, ast.Name) else "unknown"
+                supported_names = NumbaTypeRegistry.get_supported_type_names()
+                raise TypeError(f"State variable '{var_name}' is missing type argument. Use State[{', '.join(supported_names.keys())}].")
 
-            # Check for State[...] annotation
-            if not (isinstance(ann, ast.Subscript) and isinstance(ann.value, ast.Name) and ann.value.id == "State"):
-                if isinstance(ann, ast.Name) and ann.id == "State":
-                    var_name = node.target.id if isinstance(node.target, ast.Name) else "unknown"
-                    supported_names = NumbaTypeRegistry.get_supported_type_names()
-                    raise TypeError(f"State variable '{var_name}' is missing type argument. Use State[{', '.join(supported_names.keys())}].")
+            if not is_state_type_annotation(ann):
                 continue
 
             if not isinstance(node.target, ast.Name):
