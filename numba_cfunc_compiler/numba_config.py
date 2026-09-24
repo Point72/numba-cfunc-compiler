@@ -6,6 +6,7 @@ from numba_cfunc_compiler.compilation_context import CompilationContext
 ### Public API ###
 
 __all__ = (
+    "ENUMSET_BIT_WIDTH",
     "NumbaDict",
     "NumbaList",
     "NumbaTypeInfo",
@@ -20,6 +21,11 @@ __all__ = (
 T = TypeVar("T")
 K = TypeVar("K")
 V = TypeVar("V")
+
+
+# Native width of enumset values. This must match the enumset ABI exposed by
+# the host application.
+ENUMSET_BIT_WIDTH = 128
 
 
 def set_output(name: str, value: Any):

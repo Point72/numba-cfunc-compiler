@@ -100,7 +100,7 @@ class FFIMethodHelper:
             types.float32: ir.FloatType(),
             types.boolean: ir.IntType(8),
             types.voidptr: ir.IntType(8).as_pointer(),
-            enumset_type: ir.IntType(128),
+            enumset_type: enumset_type.llvm_type,
         }
         if isinstance(numba_type, types.CPointer):
             dtype = FFIMethodHelper._numba_to_llvm_type(numba_type.dtype)

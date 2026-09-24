@@ -160,7 +160,7 @@ def register():
             python_type=None,
             numba_name="enumset",
             numba_type=enumset_type,
-            size=16,
+            size=enumset_type.byte_width,
             is_numeric=False,
             is_primitive=False,
         )
