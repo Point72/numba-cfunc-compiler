@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 
@@ -7,6 +7,7 @@ from numba_cfunc_compiler.compilation_context import CompilationContext
 
 __all__ = (
     "ENUMSET_BIT_WIDTH",
+    "ENUM_BIT_WIDTH",
     "NumbaDict",
     "NumbaList",
     "NumbaTypeInfo",
@@ -23,8 +24,9 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-# Native width of enumset values. This must match the enumset ABI exposed by
-# the host application.
+# Native widths of enum and enumset values. These must match the ABIs exposed
+# by the host application.
+ENUM_BIT_WIDTH = 16
 ENUMSET_BIT_WIDTH = 128
 
 
@@ -260,51 +262,6 @@ class NumbaTypeRegistry:
             if info:
                 result[info.numba_name] = info.numba_type
         return result
-
-    # Mapping from C++ type names (as returned by struct metadata) to numba type names
-    # This is a static constant — not part of CompilationContext.
-    _CPP_TYPE_TO_NUMBA: ClassVar[dict[str, str]] = {
-        "BOOL": "int8",
-        "INT8": "int8",
-        "UINT8": "int8",
-        "INT16": "int64",
-        "UINT16": "int64",
-        "INT32": "int64",
-        "UINT32": "int64",
-        "INT64": "int64",
-        "UINT64": "int64",
-        "DOUBLE": "float64",
-        "FLOAT": "float64",
-        "DATETIME": "int64",
-        "TIMEDELTA": "int64",
-        "STRUCT": "voidptr",
-        "STRING": "voidptr",
-        "ENUM": "int64",
-    }
-
-    @classmethod
-    def cpp_type_to_numba_name(cls, cpp_type: str) -> str:
-        """Convert a C++ type name (e.g., 'INT64', 'DOUBLE') to a numba type name."""
-        return cls._CPP_TYPE_TO_NUMBA.get(cpp_type, "voidptr")
-
-
-def numba_type_to_python(ty):
-    try:
-        from numba.core import types as numba_types
-
-        if ty is numba_types.int64 or ty is numba_types.intp:
-            return int
-        elif ty is numba_types.float64:
-            return float
-        elif ty is numba_types.boolean or ty is numba_types.int8:
-            return bool
-    except ImportError:
-        pass
-    return ty
-
-
-# Primitive types supported in Signal/Output annotations (base set)
-SUPPORTED_SIGNAL_PRIMITIVES = (int, float, bool)
 
 
 # Array name constants used in generated code

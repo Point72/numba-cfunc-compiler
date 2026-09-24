@@ -16,6 +16,7 @@ from numba_cfunc_compiler.models import (
 )
 from numba_cfunc_compiler.numba_config import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.utils.enum import enum_representation
 from numba_cfunc_compiler.utils.enumset import enumset_type
 
 
@@ -141,6 +142,16 @@ def register():
             numba_name="int16",
             numba_type=numba_types.int16,
             size=2,
+            is_numeric=True,
+            is_primitive=False,
+        )
+    )
+    NumbaTypeRegistry.register_type(
+        NumbaTypeInfo(
+            python_type=None,
+            numba_name="enum",
+            numba_type=enum_representation.numba_type,
+            size=enum_representation.byte_width,
             is_numeric=True,
             is_primitive=False,
         )

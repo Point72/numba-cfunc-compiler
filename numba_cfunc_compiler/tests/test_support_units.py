@@ -45,12 +45,12 @@ from numba_cfunc_compiler.numba_config import (
     NumbaTypeRegistry,
     create_new_dict,
     create_new_list,
-    numba_type_to_python,
 )
 from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 from numba_cfunc_compiler.source_registry import CfuncParam, SourceCategory, SourceInitFilter, SourceRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST, add_statement_to_list
+from numba_cfunc_compiler.utils.enum import enum_representation
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 from numba_cfunc_compiler.utils.types import TypeHelper
 from numba_cfunc_compiler.variable_factory import (
@@ -503,8 +503,8 @@ def test_models_type_factory_registry_and_source_registry():
         assert NumbaTypeRegistry.get_dict_key_types() == (int,)
         assert NumbaTypeRegistry.get_dict_value_types() == (int, float, bool)
         assert NumbaTypeRegistry.get_numba_type_map((int, str)) == {"int64": types.int64}
-        assert NumbaTypeRegistry.cpp_type_to_numba_name("DOUBLE") == "float64"
-        assert NumbaTypeRegistry.cpp_type_to_numba_name("UNKNOWN") == "voidptr"
+        assert NumbaTypeRegistry.get_numba_type("enum") is enum_representation.numba_type
+        assert NumbaTypeRegistry.get_size_for_numba_name("enum") == enum_representation.byte_width
         with pytest.raises(KeyError):
             NumbaTypeRegistry.get_numba_type("missing")
         with pytest.raises(KeyError):
@@ -516,11 +516,6 @@ def test_models_type_factory_registry_and_source_registry():
 
         NumbaTypeRegistry.register_type(NumbaTypeInfo(str, "unicode", types.unicode_type, 8, False, False, "str"))
         assert NumbaTypeRegistry.get_by_python_type(str).numba_name == "unicode"
-
-        assert numba_type_to_python(types.int64) is int
-        assert numba_type_to_python(types.float64) is float
-        assert numba_type_to_python(types.boolean) is bool
-        assert numba_type_to_python(types.unicode_type) is types.unicode_type
 
         with pytest.raises(NotImplementedError):
             create_new_list(int)
@@ -726,6 +721,8 @@ def test_ffi_method_helper_and_method_factories():
         assert FFIMethodHelper.get_return_type(types.int64).value == 1
         assert unparse(FFIMethodHelper.get_return_type(types.voidptr)) == "voidptr_null()"
         assert unparse(FFIMethodHelper.get_return_type(types.int8)) == "make_int8()"
+        assert unparse(FFIMethodHelper.get_return_type(enum_representation.numba_type)) == "make_enum()"
+        assert FFIMethodHelper._numba_to_llvm_type(enum_representation.numba_type) == enum_representation.llvm_type
         with pytest.raises(ValueError, match="Unsupported return type"):
             FFIMethodHelper.get_return_type(types.unicode_type)
 
