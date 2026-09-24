@@ -107,7 +107,7 @@ class AST:
         value_expr = var.get()
 
         # Write the value and mark the output as ticked
-        statements.append(output_var.write(value_expr))
+        statements.append(output_var.write(value_expr, var.type))
         tick_lhs = AST.array_access(TICKED_OUTPUTS_ARRAY_NAME, idx)
         statements.append(AST.assignment(tick_lhs, ast.Constant(1)))
         return statements

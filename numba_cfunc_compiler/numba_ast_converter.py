@@ -198,7 +198,7 @@ class NumbaASTConverter(ast.NodeTransformer):
                 continue
 
             value = var.get()
-            statements.append(output_var.write(value))
+            statements.append(output_var.write(value, var.type))
             statements.append(output_var.call("output", None))
 
         # Add a void return at the end
