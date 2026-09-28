@@ -1,4 +1,4 @@
-"""Execution tests for the standalone NumbaDict / NumbaList runtime.
+"""Execution tests for standalone dictionaries, lists, and fixed arrays.
 
 Unlike ``test_support_units.py`` (which only checks AST lowering / type
 parsing) and ``test_compilation.py`` (which needs gcc and only covers scalar
@@ -10,9 +10,10 @@ symbols, or ``Py_ssize_t``/``Py_hash_t`` width mismatches) *here* rather than
 downstream in consumers like csp.
 """
 
+import re
 import unittest
 
-from numba_cfunc_compiler.node_api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
+from numba_cfunc_compiler.node_api import NumbaArray, NumbaDict, NumbaList, State, create_new_array, create_new_dict, create_new_list
 from numba_cfunc_compiler.numba_methods import numba_method
 from numba_cfunc_compiler.tests.harness import CompiledNode, Signal, compile_function, numba_node
 
@@ -85,6 +86,126 @@ def list_inline_append_len(x: Signal[int]) -> Signal[int]:
     return append_and_get_length(xs, x)
 
 
+@numba_node
+def bool_list_append_set(x: Signal[bool]) -> Signal[bool]:
+    xs: State[NumbaList] = create_new_list(bool)
+    if len(xs) == 0:
+        xs.append(False)
+    xs[0] = x
+    return xs[0]
+
+
+@numba_node
+def list_positive_constant_get_set(x: Signal[int]) -> Signal[int]:
+    xs: State[NumbaList] = create_new_list(int)
+    xs.append(x)
+    xs[0] = x + 1
+    return xs[0]
+
+
+@numba_node
+def list_negative_constant_get_set(x: Signal[int]) -> Signal[int]:
+    xs: State[NumbaList] = create_new_list(int)
+    xs.append(0)
+    xs[-1] = x
+    return xs[-1]
+
+
+@numba_node
+def list_negative_constant_pop(x: Signal[int]) -> Signal[int]:
+    xs: State[NumbaList] = create_new_list(int)
+    xs.append(x)
+    return xs.pop(-1)
+
+
+# ---- Fixed array nodes ---------------------------------------------------
+
+ARRAY_LENGTH = 3
+
+
+@numba_node
+def array_state_constant(x: Signal[int]) -> Signal[int]:
+    values: State[NumbaArray] = create_new_array(int, 4)
+    values[0] = x
+    values[-1] = values[0] + len(values)
+    return values[-1]
+
+
+@numba_node
+def array_state_dynamic(index: Signal[int], x: Signal[int]) -> Signal[int]:
+    values: State[NumbaArray] = create_new_array(int, 4)
+    values[index] = x
+    return values[index]
+
+
+@numba_node
+def array_state_persists(index: Signal[int], x: Signal[int]) -> Signal[int]:
+    values: State[NumbaArray] = create_new_array(int, 4)
+    values[index] = values[index] + x
+    return values[index]
+
+
+@numba_node
+def array_local_sum(x: Signal[int]) -> Signal[int]:
+    values = create_new_array(int, 3)
+    values[0] = x
+    values[1] = x + 1
+    total = 0
+    for value in values:
+        total += value
+    return total
+
+
+@numba_node
+def array_named_length(x: Signal[int]) -> Signal[int]:
+    values = create_new_array(int, ARRAY_LENGTH)
+    values[2] = x
+    return values[2] + len(values)
+
+
+@numba_node
+def array_bool(x: Signal[bool]) -> Signal[bool]:
+    values: State[NumbaArray] = create_new_array(bool, 2)
+    values[-1] = x
+    return values[1]
+
+
+@numba_node
+def array_float(x: Signal[float]) -> Signal[float]:
+    values: State[NumbaArray] = create_new_array(float, 2)
+    values[0] = x
+    return values[0]
+
+
+@numba_method
+def array_increment(values, index, increment):
+    values[index] = values[index] + increment
+    return values[index]
+
+
+@numba_node
+def array_inline_state(index: Signal[int], x: Signal[int]) -> Signal[int]:
+    values: State[NumbaArray] = create_new_array(int, 4)
+    return array_increment(values, index, x)
+
+
+@numba_node
+def array_bad_static_index(x: Signal[int]) -> Signal[int]:
+    values = create_new_array(int, 2)
+    return values[2] + x
+
+
+@numba_method
+def array_bad_helper_index(values):
+    return values[2]
+
+
+@numba_node
+def array_bad_helper_index_node(x: Signal[int]) -> Signal[int]:
+    values = create_new_array(int, 2)
+    return array_bad_helper_index(values) + x
+
+
 class TestDictExecution(unittest.TestCase):
     def test_set_get_int(self):
         node = CompiledNode(compile_function(dict_set_get), input_types=[int, int]).start()
@@ -147,6 +268,65 @@ class TestListExecution(unittest.TestCase):
         node.execute([10])
         node.stop()
         self.assertIsNone(node._state[0])
+
+
+class TestArrayExecution(unittest.TestCase):
+    def test_constant_index_and_length(self):
+        result = compile_function(array_state_constant)
+        self.assertEqual(result.struct_state_sizes, (32,))
+        node = CompiledNode(result, input_types=[int]).start()
+        self.assertEqual(node.execute([10])[0], 14)
+        self.assertEqual(node.execute([20])[0], 24)
+
+    def test_dynamic_index_and_negative_index(self):
+        node = CompiledNode(compile_function(array_state_dynamic), input_types=[int, int]).start()
+        self.assertEqual(node.execute([2, 17])[0], 17)
+        self.assertEqual(node.execute([-1, 23])[0], 23)
+
+    def test_state_persists(self):
+        node = CompiledNode(compile_function(array_state_persists), input_types=[int, int]).start()
+        self.assertEqual(node.execute([1, 5])[0], 5)
+        self.assertEqual(node.execute([1, 7])[0], 12)
+        self.assertEqual(node.execute([2, 4])[0], 4)
+
+    def test_local_array_is_zeroed_on_each_execution_and_iterates(self):
+        node = CompiledNode(compile_function(array_local_sum), input_types=[int]).start()
+        self.assertEqual(node.execute([10])[0], 21)
+        self.assertEqual(node.execute([20])[0], 41)
+
+    def test_length_can_be_a_module_constant(self):
+        node = CompiledNode(compile_function(array_named_length), input_types=[int]).start()
+        self.assertEqual(node.execute([6])[0], 9)
+
+    def test_bool_and_float(self):
+        bool_node = CompiledNode(compile_function(array_bool), input_types=[bool]).start()
+        float_node = CompiledNode(compile_function(array_float), input_types=[float]).start()
+        self.assertIs(bool_node.execute([True])[0], True)
+        self.assertIs(bool_node.execute([False])[0], False)
+        self.assertEqual(float_node.execute([1.5])[0], 1.5)
+
+    def test_inline_helper_mutates_array_state(self):
+        node = CompiledNode(compile_function(array_inline_state), input_types=[int, int]).start()
+        self.assertEqual(node.execute([1, 3])[0], 3)
+        self.assertEqual(node.execute([1, 4])[0], 7)
+
+    def test_constant_access_has_no_bounds_branch(self):
+        llvm_ir = compile_function(array_state_constant).compiled_func._library.get_llvm_str()
+        self.assertNotIn("llvm.trap", llvm_ir)
+        self.assertNotIn("numba_list_getitem", llvm_ir)
+        self.assertNotIn("numba_list_setitem", llvm_ir)
+
+    def test_dynamic_access_has_one_bounds_branch_per_access(self):
+        llvm_ir = compile_function(array_state_dynamic).compiled_func._library.get_llvm_str()
+        # This node performs one dynamic store and one dynamic load.
+        self.assertEqual(len(re.findall(r"\bcall void @llvm\.trap\(", llvm_ir)), 2)
+        self.assertEqual(len(re.findall(r"icmp u(?:lt|le|gt|ge) i64", llvm_ir)), 2)
+
+    def test_invalid_constant_index_is_rejected(self):
+        with self.assertRaisesRegex(Exception, "out of range"):
+            compile_function(array_bad_static_index)
+        with self.assertRaisesRegex(Exception, "out of range"):
+            compile_function(array_bad_helper_index_node)
 
 
 if __name__ == "__main__":

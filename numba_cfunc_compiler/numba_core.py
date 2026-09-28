@@ -20,6 +20,7 @@ from numba_cfunc_compiler.post_compilation import (
     apply_post_compilation,
 )
 from numba_cfunc_compiler.source_registry import SourceRegistry
+from numba_cfunc_compiler.standalone.array import standalone_array_from_voidptr, standalone_array_new
 from numba_cfunc_compiler.standalone.dict import (
     _standalone_dict_iter_begin,
     _standalone_dict_iter_next_item,
@@ -241,7 +242,7 @@ def create_compiled_func(
         variable_factory,
         start_body=start_body,
         stop_body=stop_body,
-        call_globals=call_globals,
+        call_globals=helper_globals,
         method_manager=method_manager,
     )
     new_tree = transformer.visit(tree)
@@ -287,6 +288,9 @@ def create_compiled_func(
         "standalone_list_from_voidptr": standalone_list_from_voidptr,
         "standalone_list_free": standalone_list_free,
         "standalone_list_to_voidptr": standalone_list_to_voidptr,
+        # fixed arrays (host-owned state or stack-backed locals)
+        "standalone_array_new": standalone_array_new,
+        "standalone_array_from_voidptr": standalone_array_from_voidptr,
         # standalone dict (NRT-free)
         "standalone_dict_new": standalone_dict_new,
         "standalone_dict_from_voidptr": standalone_dict_from_voidptr,

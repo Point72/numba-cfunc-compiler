@@ -12,7 +12,7 @@ Extensible compiler for producing native C-callable functions from Python source
 A compilation framework that transforms Python functions into native C-callable functions using Numba `@cfunc` and AST rewriting. Unlike using `@cfunc` directly, it provides:
 
 - **Stateful variables** — declare persistent state with natural syntax that survives across calls with automatic lifecycle management (start/execute/stop)
-- **Standalone typed containers** — lists and dicts that work inside compiled functions without Numba's runtime overhead
+- **Standalone typed containers** — fixed arrays, lists, and dicts that work inside compiled functions without Numba's runtime overhead
 - **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering
 - **Plugin architecture** — all domain-specific behavior (input handlers, output handlers, AST transforms, type inference) is injected through registration APIs
 
@@ -313,6 +313,7 @@ Registered by `defaults.register_all()`:
 - **DateTime** — Stored as nanoseconds (int64). Constructor calls like `datetime(2020,1,1,tzinfo=timezone.utc)` are lowered to constants at compile time. Must be timezone-aware.
 - **TimeDelta** — Stored as nanoseconds (int64). `timedelta(seconds=5)` lowered to constants.
 - **NumbaList** — Standalone typed list (`int`/`float`/`bool` elements). Supports `len`, indexing, `append`, `pop`, `clear`, iteration. Created with `create_new_list(int)`.
+- **NumbaArray** — Fixed-size, zero-initialized array of `int`/`float`/`bool`. Supports `len`, indexing, assignment, and iteration. Use `create_new_array(int, 8)` for a local array or `values: State[NumbaArray] = create_new_array(int, 8)` for persistent state. The length must be a positive compile-time integer. Constant indices are validated during compilation; invalid dynamic indices stop the process because the callback ABI has no error channel.
 - **NumbaDict** — Standalone typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Created with `create_new_dict(int, float)`.
 - **Structs** — Opaque void pointers with field metadata. Read/write fields via pointer arithmetic. Base `StructType` must be subclassed with `is_type_supported()`, `_get_struct_fields()`, `_get_struct_size()`.
 
@@ -404,6 +405,8 @@ module = link_ffi_bitcode(module, bitcode)
 `link_ffi_bitcode` handles linking, patching `alwaysinline`, and stripping `target-cpu` / `target-features` to prevent inlining mismatches. Falls back gracefully to external calls on error.
 
 ## Implementation Notes
+
+For a detailed, source-level walkthrough of the compiler pipeline and its `hfalgo` integration, see [How the code works](CODE_WALKTHROUGH.md).
 
 ### Compilation Flow
 

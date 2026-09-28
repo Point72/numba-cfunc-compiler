@@ -10,6 +10,7 @@ from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
     # Constants
+    "ArrayTypeMarker",
     "CONTAINER_STATE_INIT",
     "ContainerType",
     "DictTypeMarker",
@@ -101,6 +102,23 @@ class OutputAnalysis:
 
 
 @dataclass(frozen=True)
+class ArrayTypeMarker:
+    """Primitive element type and compile-time length of a fixed array."""
+
+    element_type: type
+    length: int
+
+    def __post_init__(self):
+        allowed = (int, float, bool)
+        if self.element_type not in allowed:
+            raise TypeError(f"Unsupported array element type: {self.element_type}")
+        if type(self.length) is not int or self.length <= 0:
+            raise TypeError("Array length must be a positive compile-time integer")
+        if self.length > (2**63 - 1) // NumbaTypeRegistry.get_size(self.element_type):
+            raise ValueError("Array byte size exceeds the supported address range")
+
+
+@dataclass(frozen=True)
 class ListTypeMarker:
     """Type marker for NumbaList types used in function signatures and state."""
 
@@ -161,6 +179,10 @@ class VariableType(ABC):
 
     def prepare_voidptr_read(self, source: Any) -> "VariableType":
         return self
+
+    def read_from_voidptr(self, local_name: str, loaded_value: ast.AST) -> ast.AST | None:
+        """Override to reconstruct a custom Numba type from external storage."""
+        return None
 
     def get_methods(self) -> list:
         return []

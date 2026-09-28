@@ -3,9 +3,11 @@
 from typing import Any, Generic, TypeVar
 
 __all__ = [
+    "NumbaArray",
     "NumbaDict",
     "NumbaList",
     "State",
+    "create_new_array",
     "create_new_dict",
     "create_new_list",
     "set_output",
@@ -48,6 +50,15 @@ class NumbaList(Generic[T]):
     """
 
 
+class NumbaArray(Generic[T]):
+    """Fixed-size primitive array for compiled nodes.
+
+    Use ``create_new_array(int, 8)`` for local storage or
+    ``State[NumbaArray] = create_new_array(int, 8)`` for persistent state.
+    Elements are zero-initialized and the length cannot change.
+    """
+
+
 class NumbaDict(Generic[K, V]):
     """
     Type annotation for dict input parameters in @numba_node functions.
@@ -79,6 +90,11 @@ def create_new_list(element_type: type) -> NumbaList:
         A new empty NumbaList
     """
     raise NotImplementedError("create_new_list is transformed at compile time by numba_node")
+
+
+def create_new_array(element_type: type, length: int) -> NumbaArray:
+    """Create a fixed-size, zero-initialized array inside a compiled node."""
+    raise NotImplementedError("create_new_array is transformed at compile time by numba_node")
 
 
 def create_new_dict(key_type: type, value_type: type) -> NumbaDict:

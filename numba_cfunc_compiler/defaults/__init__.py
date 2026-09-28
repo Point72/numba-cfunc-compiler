@@ -4,8 +4,9 @@ is_supported_type = NumbaTypeRegistry.is_supported_type
 
 
 def register_types():
-    """Register all default type support (primitives, datetime, list, dict, struct)."""
+    """Register all default type support (primitives, datetime, arrays, lists, dicts, structs)."""
     from numba_cfunc_compiler.defaults import (
+        array_support,
         datetime_support,
         dict_support,
         list_support,
@@ -18,6 +19,7 @@ def register_types():
     datetime_support.register()
     timedelta_support.register()
     list_support.register()
+    array_support.register()
     dict_support.register()
     struct_support.register()
 

@@ -128,6 +128,9 @@ class VoidPtrSource(VariableSource):
         # ContainerType handles its own read logic (e.g. list/dict from voidptr)
         if isinstance(self.type, ContainerType):
             return self.type.read(self.local_variable_name(), self.name, loaded_value)
+        custom_read = self.type.read_from_voidptr(self.local_variable_name(), loaded_value)
+        if custom_read is not None:
+            return custom_read
         # Allow types to prepare themselves before reading
         self.type = self.type.prepare_voidptr_read(self)
         value = AST.cast_from_voidptr(loaded_value, self.type.get_numba_type_name())

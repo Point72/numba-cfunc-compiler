@@ -6,17 +6,19 @@ compiler_constants according to the symbol's purpose.
 
 from numba_cfunc_compiler import compiler_constants as _compiler_constants
 from numba_cfunc_compiler.config import NumbaConfig, get_numba_config, set_numba_config
-from numba_cfunc_compiler.node_api import NumbaDict, NumbaList, State, create_new_dict, create_new_list, set_output
+from numba_cfunc_compiler.node_api import NumbaArray, NumbaDict, NumbaList, State, create_new_array, create_new_dict, create_new_list, set_output
 from numba_cfunc_compiler.numba_methods import numba_method
 from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 
 __all__ = (
     "NumbaConfig",
+    "NumbaArray",
     "NumbaDict",
     "NumbaList",
     "NumbaTypeInfo",
     "NumbaTypeRegistry",
     "State",
+    "create_new_array",
     "create_new_dict",
     "create_new_list",
     "get_numba_config",

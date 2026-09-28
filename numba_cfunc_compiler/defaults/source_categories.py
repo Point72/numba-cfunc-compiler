@@ -80,6 +80,7 @@ class StateCategory(SourceCategory):
         ]
 
     def create_variables(self, info, factory):
+        from numba_cfunc_compiler.defaults.array_support import NumbaArrayType
         from numba_cfunc_compiler.defaults.struct_support import StructType
         from numba_cfunc_compiler.models import ContainerType
         from numba_cfunc_compiler.type_factory import TypeFactory
@@ -99,9 +100,12 @@ class StateCategory(SourceCategory):
             factory.add_variable(var, category=SourceCategoryId.STATE)
             if isinstance(var_type, ContainerType):
                 info.nrt_state_indices.append(idx)
-            elif isinstance(var_type, StructType):
+            elif isinstance(var_type, (StructType, NumbaArrayType)):
                 info.struct_state_indices.append(idx)
-                info.struct_state_sizes.append(var_type.get_size())
+                if isinstance(var_type, NumbaArrayType):
+                    info.struct_state_sizes.append(NumbaArrayType.get_type_size(var_type.value))
+                else:
+                    info.struct_state_sizes.append(var_type.get_size())
 
     def get_result_metadata(self, info):
         return {
