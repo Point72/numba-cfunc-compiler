@@ -1,7 +1,10 @@
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
+
+from llvmlite import binding as llvm
+
+from numba_cfunc_compiler.utils.llvm import LLVMIRHelper
 
 __all__ = [
     "CompilationOptions",
@@ -24,29 +27,6 @@ class CompilationOptions:
     force_inline: bool = False
 
 
-def _force_inline(llvm_ir_text: str) -> str:
-    """Replace noinline with alwaysinline in LLVM attribute groups."""
-    return re.sub(
-        r"attributes\s+#(\d+)\s*=\s*\{\s*noinline\s*\}",
-        r"attributes #\1 = { alwaysinline }",
-        llvm_ir_text,
-    )
-
-
-def _rename_exported_symbol(llvm_ir_text: str, old_symbol: str, new_symbol: str) -> str:
-    if old_symbol == new_symbol:
-        return llvm_ir_text
-
-    renamed_ir, substitutions = re.subn(
-        rf"@{re.escape(old_symbol)}(?=[^\w.$])",
-        f"@{new_symbol}",
-        llvm_ir_text,
-    )
-    if substitutions == 0:
-        raise ValueError(f"Failed to find compiled symbol {old_symbol!r} in generated LLVM IR")
-    return renamed_ir
-
-
 def apply_post_compilation(
     compiled_func: Any,
     semantic_key: str,
@@ -57,29 +37,37 @@ def apply_post_compilation(
     exported_entry_point = f"_gc_numba_{semantic_key}"
 
     if opts.force_inline:
-        ir_text = _force_inline(ir_text)
+        ir_text = LLVMIRHelper.force_inline(ir_text)
 
-    ir_text = _rename_exported_symbol(ir_text, raw_native_name, exported_entry_point)
+    module = llvm.parse_assembly(ir_text)
+    LLVMIRHelper.rename_exported_symbol(module, raw_native_name, exported_entry_point)
+    # The graph runtime discovers this entry point by name. All other function
+    # bodies belong to this compilation unit and can be inlined and removed by
+    # the graph module's optimization pipeline.
+    LLVMIRHelper.internalize_defined_functions(module, preserve_symbols={exported_entry_point})
+    module.verify()
 
-    return ir_text, exported_entry_point
+    return str(module), exported_entry_point
 
 
-def link_ffi_bitcode(module: Any, bitcode: bytes) -> Any:
+def link_ffi_bitcode(module: Any, bitcode: bytes, *, internalize: bool = False) -> Any:
     """Link FFI function bodies into an LLVM module for inlining.
 
     Args:
         module: An llvmlite.binding.ModuleRef (the linked LLVM module).
         bitcode: Raw bytes of a .bc file containing the FFI function
             implementations (e.g. compiled from the C interface source).
+        internalize: Give definitions supplied by the FFI module internal
+            linkage so they can be removed after their callers are inlined.
+            Disabled by default for callers that use the definitions as an ABI.
 
     Returns: The (possibly re-parsed) ModuleRef with FFI bodies linked in and
         patched for inlining.  Falls back to the original *module* on error.
     """
-    import llvmlite.binding as llvm
-
     try:
         ffi_module = llvm.parse_bitcode(bitcode)
 
+        ffi_definition_names = {func.name for func in ffi_module.functions if not func.is_declaration}
         # Collect names of functions that are currently just declarations
         # (i.e. FFI stubs).  After linking these become definitions that
         # we want the inliner to pull in.
@@ -87,24 +75,17 @@ def link_ffi_bitcode(module: Any, bitcode: bytes) -> Any:
 
         module.link_in(ffi_module, preserve=False)
 
-        # Patch the linked-in FFI definitions to ``alwaysinline`` and strip
-        # target attributes that would cause inlining mismatches.
-        ir_text = str(module)
-
-        patched_lines = []
-        for line in ir_text.split("\n"):
-            if line.startswith("define ") and any(f"@{n}(" in line for n in ffi_decl_names):
-                # Insert 'alwaysinline' before the #N attribute group ref
-                line = re.sub(r"(#\d+)", r"alwaysinline \1", line, count=1)
-            patched_lines.append(line)
-        ir_text = "\n".join(patched_lines)
+        ir_text = LLVMIRHelper.mark_always_inline(module, ffi_decl_names & ffi_definition_names)
 
         # Strip target-cpu and target-features from FFI attribute groups so
-        # they match the numba function's (empty) target attrs.
-        ir_text = re.sub(r'"target-cpu"="[^"]*"', "", ir_text)
-        ir_text = re.sub(r'"target-features"="[^"]*"', "", ir_text)
-
+        # they match the numba function's (empty) target attrs. llvmlite's
+        # binding does not expose removing these attributes.
+        ir_text = LLVMIRHelper.strip_target_attributes(ir_text)
         module = llvm.parse_assembly(ir_text)
+
+        if internalize:
+            LLVMIRHelper.internalize_defined_functions(module, only_symbols=ffi_definition_names)
+
         module.verify()
 
     except Exception as e:  # noqa: BLE001 - optimization failure must fall back

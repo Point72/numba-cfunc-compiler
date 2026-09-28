@@ -2,7 +2,7 @@ import ast
 from typing import Annotated
 
 import pytest
-from llvmlite import ir
+from llvmlite import binding as llvm, ir
 from numba.core import types
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
@@ -15,8 +15,6 @@ from numba_cfunc_compiler.output_utils import (
 )
 from numba_cfunc_compiler.post_compilation import (
     CompilationOptions,
-    _force_inline,
-    _rename_exported_symbol,
     apply_post_compilation,
     link_ffi_bitcode,
 )
@@ -42,6 +40,7 @@ from numba_cfunc_compiler.state_ast import (
     is_state_annotation,
     state_annotation_target,
 )
+from numba_cfunc_compiler.utils.llvm import LLVMIRHelper
 
 
 def unparse(node: ast.AST) -> str:
@@ -56,7 +55,7 @@ def make_builder():
     return module, ir.IRBuilder(block)
 
 
-def test_output_metadata():
+def test_output_utils():
     tree = ast.parse(
         """
 def f(x):
@@ -92,7 +91,7 @@ def f(x):
         parse_annotated_metadata_dict(Annotated[SignalSet, ("bad",)], SignalSet, "SignalSet", "example")
 
 
-def test_state_ast_rewrites():
+def test_state_ast():
     ann = ast.parse("state: State[int] = 1").body[0]
     assert is_state_annotation(ann)
     assert state_annotation_target(ann) == "state"
@@ -112,17 +111,34 @@ def test_state_ast_rewrites():
     assert unparse(append_state_values_to_return(ast.Return(value=None), ["s"])) == "return (s,)"
 
 
-def test_symbol_rewrite_and_linking(caplog):
-    assert _force_inline("attributes #0 = { noinline }") == "attributes #0 = { alwaysinline }"
-    assert _rename_exported_symbol("define void @old(i8* %x) { ret void }", "old", "new").startswith("define void @new")
-    same_ir = "define void @same() { ret void }"
-    assert _rename_exported_symbol(same_ir, "same", "same") == same_ir
+def test_post_compilation(caplog):
+    assert LLVMIRHelper.force_inline("attributes #0 = { noinline }") == "attributes #0 = { alwaysinline }"
+    renamed = llvm.parse_assembly("define void @old() { call void @old()\n ret void }")
+    LLVMIRHelper.rename_exported_symbol(renamed, "old", "new")
+    assert renamed.get_function("new").name == "new"
+    assert "call void @new()" in str(renamed)
+    same_module = llvm.parse_assembly("define void @same() { ret void }")
+    LLVMIRHelper.rename_exported_symbol(same_module, "same", "same")
+    assert same_module.get_function("same").name == "same"
     with pytest.raises(ValueError, match="Failed to find"):
-        _rename_exported_symbol("define void @other() { ret void }", "old", "new")
+        LLVMIRHelper.rename_exported_symbol(same_module, "old", "new")
+
+    internalized = llvm.parse_assembly(
+        "define dso_local void @entry() { ret void }\n"
+        'define linkonce_odr hidden i64 @"helper.with-punctuation"() { ret i64 0 }\n'
+        "define void @untouched() { ret void }\n"
+        "declare void @external()\n"
+    )
+    LLVMIRHelper.internalize_defined_functions(internalized, only_symbols={"helper.with-punctuation", "external"}, preserve_symbols={"entry"})
+    assert internalized.get_function("entry").linkage == llvm.Linkage.external
+    assert internalized.get_function("helper.with-punctuation").linkage == llvm.Linkage.internal
+    assert internalized.get_function("untouched").linkage == llvm.Linkage.external
+    assert internalized.get_function("external").is_declaration
+    internalized.verify()
 
     class Library:
         def get_llvm_str(self):
-            return "define void @raw_name() { ret void }\nattributes #0 = { noinline }"
+            return "define void @raw_name() #0 { ret void }\ndefine void @helper() { ret void }\nattributes #0 = { noinline }"
 
     class CompiledFunc:
         native_name = "raw_name"
@@ -132,10 +148,48 @@ def test_symbol_rewrite_and_linking(caplog):
     assert exported == "_gc_numba_abc123"
     assert "@_gc_numba_abc123" in ir_text
     assert "alwaysinline" in ir_text
+    assert "define internal void @helper()" in ir_text
 
     module = ir.Module(name="bad_link")
-    assert link_ffi_bitcode(module, b"not valid bitcode") is module
+    assert link_ffi_bitcode(module, b"not valid bitcode", internalize=True) is module
     assert "Failed to link FFI bitcode" in caplog.text
+
+
+def test_llvm_errors():
+    colliding = llvm.parse_assembly("define void @old() { ret void }\ndefine void @new() { ret void }")
+    with pytest.raises(ValueError, match="Failed to rename"):
+        LLVMIRHelper.rename_exported_symbol(colliding, "old", "new")
+
+    function = llvm.parse_assembly("define void @ffi() { ret void }").get_function("ffi")
+
+    class ChangedHeaderModule:
+        functions = (function,)
+
+        def __str__(self):
+            return "define void @other() { ret void }"
+
+    with pytest.raises(ValueError, match="Cannot mark 'ffi' alwaysinline"):
+        LLVMIRHelper.mark_always_inline(ChangedHeaderModule(), {"ffi"})
+
+
+@pytest.mark.parametrize("internalize", [False, True])
+def test_ffi_linkage(internalize):
+    module = llvm.parse_assembly('declare i64 @"ffi #0"()\ndefine i64 @entry() { %result = call i64 @"ffi #0"()\n ret i64 %result }\n')
+    ffi_module = llvm.parse_assembly(
+        'define i64 @"ffi #0"() #0 { ret i64 7 }\n'
+        "define i64 @unused_ffi() { ret i64 9 }\n"
+        'attributes #0 = { "target-cpu"="x86-64" "target-features"="+sse2" }\n'
+    )
+
+    linked = link_ffi_bitcode(module, ffi_module.as_bitcode(), internalize=internalize)
+
+    assert linked.get_function("entry").linkage == llvm.Linkage.external
+    assert linked.get_function("ffi #0").linkage == (llvm.Linkage.internal if internalize else llvm.Linkage.external)
+    assert linked.get_function("unused_ffi").linkage == (llvm.Linkage.internal if internalize else llvm.Linkage.external)
+    assert b"alwaysinline" in b" ".join(linked.get_function("ffi #0").attributes)
+    assert '"target-cpu"' not in str(linked)
+    assert '"target-features"' not in str(linked)
+    linked.verify()
 
 
 def test_standalone_types():
@@ -165,7 +219,7 @@ def test_standalone_types():
             get_llvm_type_for_numba_dtype(types.unicode_type)
 
 
-def test_llvm_builder_helpers():
+def test_llvm_builder():
     module, builder = make_builder()
     fnty = ir.FunctionType(i64(), [])
     declared = get_or_declare_function(module, "external_func", fnty)
