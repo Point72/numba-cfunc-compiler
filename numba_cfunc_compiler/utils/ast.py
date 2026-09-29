@@ -5,10 +5,8 @@ from llvmlite import ir
 from numba import TypingError, types
 from numba.extending import intrinsic
 
-from numba_cfunc_compiler.numba_config import (
-    TICKED_OUTPUTS_ARRAY_NAME,
-    NumbaTypeRegistry,
-)
+from numba_cfunc_compiler.compiler_constants import TICKED_OUTPUTS_ARRAY_NAME
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 __all__ = [
     "AST",

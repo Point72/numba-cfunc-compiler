@@ -6,7 +6,7 @@ for use by the C test runner.
 
 Usage:
     from tests.harness import Signal, compile_function, numba_node
-    from numba_cfunc_compiler.numba_config import State
+    from numba_cfunc_compiler.node_api import State
 
     @numba_node
     def add(x: Signal[int], y: Signal[int]) -> Signal[int]:

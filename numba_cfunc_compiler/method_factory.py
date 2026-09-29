@@ -1,10 +1,7 @@
 import ast
 from abc import ABC, abstractmethod
 
-from numba_cfunc_compiler.numba_config import (
-    TICKED_OUTPUTS_ARRAY_NAME,
-    NumbaTypeRegistry,
-)
+from numba_cfunc_compiler.compiler_constants import TICKED_OUTPUTS_ARRAY_NAME
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 
@@ -131,7 +128,7 @@ def ffi_method_factory(
         def handle(var, args):
             from numba_cfunc_compiler.variable_factory import LocalVariableSource
 
-            numba_ret_type = NumbaTypeRegistry.resolve_to_numba_type(return_type)
+            numba_ret_type = FFIMethodHelper.resolve_return_type(return_type)
 
             if isinstance(var, LocalVariableSource):
                 # if the object is a local variable, we can just use the variable name

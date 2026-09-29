@@ -14,8 +14,8 @@ from numba_cfunc_compiler.models import (
     StateAnalysis,
     StateVariableInfo,
 )
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 __all__ = [
     "FunctionAnalyzer",

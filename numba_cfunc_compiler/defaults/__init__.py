@@ -1,4 +1,4 @@
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 is_supported_type = NumbaTypeRegistry.is_supported_type
 

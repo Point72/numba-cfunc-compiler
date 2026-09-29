@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextvars
 from typing import Any
 
+from numba_cfunc_compiler.config import get_numba_config
+
 __all__ = ["CompilationContext"]
 
 _current_context: contextvars.ContextVar[CompilationContext] = contextvars.ContextVar(
@@ -51,6 +53,7 @@ class CompilationContext:
         self._nrt_loaded: bool = False
 
     def __enter__(self) -> CompilationContext:  # noqa: PYI034 - avoid adding a Python 3.10 backport dependency
+        get_numba_config()
         self._token = _current_context.set(self)
         return self
 
@@ -60,6 +63,7 @@ class CompilationContext:
     @staticmethod
     def current() -> CompilationContext:
         """Return the active context, lazily creating a default if needed."""
+        get_numba_config()
         try:
             return _current_context.get()
         except LookupError:

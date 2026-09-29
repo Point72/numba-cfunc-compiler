@@ -1,4 +1,4 @@
-from numba_cfunc_compiler.numba_config import STATE_ARRAY_NAME
+from numba_cfunc_compiler.compiler_constants import STATE_ARRAY_NAME
 from numba_cfunc_compiler.source_registry import (
     CfuncParam,
     SourceCategory,
