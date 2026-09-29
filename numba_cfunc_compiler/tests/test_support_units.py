@@ -379,6 +379,30 @@ def test_struct_helpers():
         assert is_struct_type(struct_type)
         assert not is_struct_type(TypeFactory.get_type(int))
 
+        output = OutputSource(0, struct_type, "result")
+        assert unparse(output.write(ast.Name(id="order", ctx=ast.Load()), struct_type)) == ("struct_memcpy(output_0_ptr, order, 24)")
+        with pytest.raises(TypeError, match="expected struct"):
+            output.write(ast.Constant(1), TypeFactory.get_type(int))
+
+        class OtherStruct:
+            pass
+
+        other_type = StructType(OtherStruct, UnknownNumbaValue(), fields={}, size=24)
+        with pytest.raises(TypeError, match="struct type"):
+            output.write(ast.Name(id="other", ctx=ast.Load()), other_type)
+
+        wrong_size_type = StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=8)
+        with pytest.raises(TypeError, match="struct size"):
+            output.write(ast.Name(id="order", ctx=ast.Load()), wrong_size_type)
+
+        invalid_output = OutputSource(
+            0,
+            StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=0),
+            "result",
+        )
+        with pytest.raises(TypeError, match="invalid size"):
+            invalid_output.write(ast.Name(id="order", ctx=ast.Load()), invalid_output.type)
+
         assert unparse(struct_type.get_field("order", "price")) == "struct_field_access(order, 0, 'float64')"
         assert unparse(struct_type.get_field(ast.Name(id="ptr", ctx=ast.Load()), "count")) == "struct_field_access(ptr, 8, 'int64')"
         assert unparse(struct_type.set_field("order", "count", ast.Constant(7))) == "struct_field_store(order, 8, 'int64', 7)"
@@ -617,6 +641,11 @@ def test_variable_factory():
         assert unparse(output.write(ast.Constant(3))) == "output_0_ptr[0] = 3"
         with pytest.raises(TypeError, match="Return value"):
             output.write(ast.Constant(3.14))
+        output_factory = VariableFactory()
+        output_factory.add_variable(output)
+        output_factory.add_variable(LocalVariableSource(TypeFactory.get_type(float), "local_float"))
+        with pytest.raises(TypeError, match="Return value"):
+            output.write(ast.Name(id="local_float", ctx=ast.Load()))
 
         local = LocalVariableSource(int_type, "local")
         assert unparse(local.get()) == "local"
