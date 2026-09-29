@@ -1,7 +1,7 @@
 import ast
 from abc import ABC, abstractmethod
 
-from numba_cfunc_compiler.numba_config import TICKED_OUTPUTS_ARRAY_NAME
+from numba_cfunc_compiler.compiler_constants import TICKED_OUTPUTS_ARRAY_NAME
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 

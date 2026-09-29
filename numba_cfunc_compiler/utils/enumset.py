@@ -4,7 +4,7 @@ from llvmlite import ir
 from numba import types
 from numba.extending import intrinsic, models, register_model
 
-from numba_cfunc_compiler.numba_config import ENUMSET_BIT_WIDTH
+from numba_cfunc_compiler.config import get_numba_config
 
 __all__ = [
     "EnumSetNumbaType",
@@ -16,12 +16,20 @@ __all__ = [
 class EnumSetNumbaType(types.Type):
     """Opaque-at-Python-level scalar with a configurable integer representation."""
 
-    bit_width = ENUMSET_BIT_WIDTH
-    byte_width = bit_width // 8
-    llvm_type = ir.IntType(bit_width)
-
     def __init__(self) -> None:
         super().__init__(name="enumset")
+
+    @property
+    def bit_width(self) -> int:
+        return get_numba_config().enumset_bit_width
+
+    @property
+    def byte_width(self) -> int:
+        return self.bit_width // 8
+
+    @property
+    def llvm_type(self) -> ir.IntType:
+        return ir.IntType(self.bit_width)
 
 
 enumset_type = EnumSetNumbaType()

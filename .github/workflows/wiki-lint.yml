@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - "README.md"
       - "docs/**"
   workflow_dispatch:
 
@@ -35,12 +36,12 @@ jobs:
           submodules: recursive
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: ./.github/actions/setup-python
+        uses: actions-ext/python/setup@a3f3953ef26a519ab7b6a56b94d06fa1b31ab3f3
         with:
-          version: '${{ matrix.python-version }}'
+          version: ${{ matrix.python-version }}
 
       - name: Install python dependencies
-        run: make requirements
+        run: python -m pip install mdformat "mdformat-tables>=1" codespell
 
       - name: Docs Lint Steps
         run: make lint-docs

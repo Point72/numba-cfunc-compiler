@@ -2,7 +2,7 @@ from llvmlite import ir
 from numba import types
 from numba.extending import intrinsic
 
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 __all__ = [
     "StructHelper",

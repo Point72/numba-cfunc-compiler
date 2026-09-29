@@ -14,8 +14,8 @@ from numba_cfunc_compiler.models import (
     UnknownNumbaValue,
     VariableType,
 )
-from numba_cfunc_compiler.numba_config import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.utils.enum import enum_representation
 from numba_cfunc_compiler.utils.enumset import enumset_type
 

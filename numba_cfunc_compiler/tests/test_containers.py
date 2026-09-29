@@ -12,7 +12,7 @@ downstream in consumers like csp.
 
 import unittest
 
-from numba_cfunc_compiler.numba_config import NumbaDict, NumbaList, State, create_new_dict, create_new_list
+from numba_cfunc_compiler.node_api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
 from numba_cfunc_compiler.tests.harness import CompiledNode, Signal, compile_function, numba_node
 
 # ---- Dict nodes -----------------------------------------------------------

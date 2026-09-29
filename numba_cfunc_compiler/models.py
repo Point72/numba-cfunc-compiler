@@ -4,10 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from numba_cfunc_compiler.numba_config import (
-    STATE_ARRAY_NAME,
-    NumbaTypeRegistry,
-)
+from numba_cfunc_compiler.compiler_constants import STATE_ARRAY_NAME
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
@@ -194,8 +192,6 @@ class VariableType(ABC):
         override this if their storage size differs from the numba type
         (which is unusual).
         """
-        from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
-
         instance = cls.from_type(var_type, UnknownNumbaValue())
         if instance is None:
             raise ValueError(f"{cls.__name__} cannot determine size for {var_type}")

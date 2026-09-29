@@ -8,8 +8,8 @@ from typing import Any, Optional
 from numba import types as numba_types
 
 from numba_cfunc_compiler.models import StateVariableInfo, UnknownNumbaValue, VariableType
-from numba_cfunc_compiler.numba_config import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.types import TypeHelper
 

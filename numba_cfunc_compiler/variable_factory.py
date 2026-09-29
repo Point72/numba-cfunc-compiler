@@ -3,15 +3,13 @@ import copy
 from collections import defaultdict
 from typing import Any
 
+from numba_cfunc_compiler.compiler_constants import OUTPUTS_ARRAY_NAME
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.models import (
     ContainerType,
     UnknownNumbaType,
     UnknownType,
     VariableType,
-)
-from numba_cfunc_compiler.numba_config import (
-    OUTPUTS_ARRAY_NAME,
 )
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST

@@ -60,7 +60,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.stop_body = stop_body or []
 
     def visit_FunctionDef(self, node):
-        from numba_cfunc_compiler.numba_config import (
+        from numba_cfunc_compiler.compiler_constants import (
             LIFECYCLE_EXECUTE,
             LIFECYCLE_PARAM_NAME,
             LIFECYCLE_START,

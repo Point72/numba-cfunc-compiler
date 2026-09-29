@@ -12,8 +12,8 @@ from numba_cfunc_compiler.defaults import register_all
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.method_factory import ffi_method_factory
 from numba_cfunc_compiler.models import VariableType
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 from numba_cfunc_compiler.utils.enum import EnumRepresentation, enum_representation, make_enum
 from numba_cfunc_compiler.utils.enumset import enumset_type, make_enumset
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper

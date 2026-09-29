@@ -37,18 +37,18 @@ from numba_cfunc_compiler.models import (
     UnknownNumbaType,
     UnknownNumbaValue,
     UnknownType,
+    VariableType,
 )
-from numba_cfunc_compiler.numba_config import (
+from numba_cfunc_compiler.node_api import (
     NumbaDict,
     NumbaList,
-    NumbaTypeInfo,
-    NumbaTypeRegistry,
     create_new_dict,
     create_new_list,
 )
 from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 from numba_cfunc_compiler.source_registry import CfuncParam, SourceCategory, SourceInitFilter, SourceRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST, add_statement_to_list
 from numba_cfunc_compiler.utils.enum import enum_representation
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
@@ -499,6 +499,14 @@ def test_models_type_factory_registry_and_source_registry():
         assert NumbaTypeRegistry.get_supported_type_names()["int"] is int
         assert NumbaTypeRegistry.is_supported_type(int)
         assert not NumbaTypeRegistry.is_supported_type(str)
+
+        class BytesType(VariableType):
+            @classmethod
+            def is_type_supported(cls, var_type):
+                return var_type is bytes
+
+        TypeFactory.register(BytesType)
+        assert NumbaTypeRegistry.is_supported_type(bytes)
         assert NumbaTypeRegistry.get_list_element_types() == (int, float, bool)
         assert NumbaTypeRegistry.get_dict_key_types() == (int,)
         assert NumbaTypeRegistry.get_dict_value_types() == (int, float, bool)

@@ -23,7 +23,6 @@ from numba.core import types
 from numba.core.datamodel import models
 from numba.extending import intrinsic, overload, overload_method, register_model
 
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
 from numba_cfunc_compiler.standalone.utils import (
     get_llvm_type_for_numba_dtype as _get_llvm_type,
     get_or_declare_function,
@@ -34,6 +33,7 @@ from numba_cfunc_compiler.standalone.utils import (
     prepare_int_key_for_lookup as _prepare_key,
     store_value_to_buffer,
 )
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 # Default minimum size for dict (matches D_MINSIZE in dictobject.c)
 D_MINSIZE = 8

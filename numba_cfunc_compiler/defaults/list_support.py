@@ -12,8 +12,9 @@ from numba_cfunc_compiler.models import (
     ParameterInfo,
     StateVariableInfo,
 )
-from numba_cfunc_compiler.numba_config import NumbaList, NumbaTypeRegistry
+from numba_cfunc_compiler.node_api import NumbaList
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST
 
 

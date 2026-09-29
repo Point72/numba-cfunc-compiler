@@ -61,8 +61,8 @@ class FFIMethodHelper:
     def resolve_return_type(return_type):
         """Resolve an FFI return annotation, including registered custom value types."""
         from numba_cfunc_compiler.models import UnknownType
-        from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
         from numba_cfunc_compiler.type_factory import TypeFactory
+        from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
         variable_type = TypeFactory.get_type(return_type)
         if not isinstance(variable_type, UnknownType):

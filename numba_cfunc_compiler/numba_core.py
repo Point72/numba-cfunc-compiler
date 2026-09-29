@@ -11,6 +11,7 @@ from numba import cfunc, float64, int8, int64
 from numba.types import CPointer
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
+from numba_cfunc_compiler.config import get_numba_config
 from numba_cfunc_compiler.function_analyzer import FunctionAnalyzer
 from numba_cfunc_compiler.numba_ast_converter import NumbaASTConverter
 from numba_cfunc_compiler.post_compilation import (
@@ -205,6 +206,7 @@ def create_compiled_func(
     Returns:
         CompilationResult with the compiled cfunc and all wiring metadata.
     """
+    get_numba_config()
     opts = options or CompilationOptions()
     info = NumbaFunctionInfo(
         func,
