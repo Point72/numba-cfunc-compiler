@@ -146,6 +146,8 @@ line-length = 150
 [tool.ruff.lint]
 extend-select = [
     "I",
+    "PLC0414",
+    "RUF022",
 ]
 
 [tool.ruff.lint.isort]

@@ -1,13 +1,13 @@
 """Names and lifecycle values used by generated cfunc code."""
 
 __all__ = [
-    "STATE_ARRAY_NAME",
-    "TICKED_OUTPUTS_ARRAY_NAME",
-    "OUTPUTS_ARRAY_NAME",
-    "LIFECYCLE_PARAM_NAME",
     "LIFECYCLE_EXECUTE",
+    "LIFECYCLE_PARAM_NAME",
     "LIFECYCLE_START",
     "LIFECYCLE_STOP",
+    "OUTPUTS_ARRAY_NAME",
+    "STATE_ARRAY_NAME",
+    "TICKED_OUTPUTS_ARRAY_NAME",
 ]
 
 # Array name constants used in generated code
