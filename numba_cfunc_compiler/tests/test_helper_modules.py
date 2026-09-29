@@ -56,7 +56,7 @@ def make_builder():
     return module, ir.IRBuilder(block)
 
 
-def test_output_utils_validate_returns_and_annotated_metadata():
+def test_output_metadata():
     tree = ast.parse(
         """
 def f(x):
@@ -92,7 +92,7 @@ def f(x):
         parse_annotated_metadata_dict(Annotated[SignalSet, ("bad",)], SignalSet, "SignalSet", "example")
 
 
-def test_state_ast_helpers_identify_and_rewrite_state_nodes():
+def test_state_ast_rewrites():
     ann = ast.parse("state: State[int] = 1").body[0]
     assert is_state_annotation(ann)
     assert state_annotation_target(ann) == "state"
@@ -112,7 +112,7 @@ def test_state_ast_helpers_identify_and_rewrite_state_nodes():
     assert unparse(append_state_values_to_return(ast.Return(value=None), ["s"])) == "return (s,)"
 
 
-def test_post_compilation_symbol_rewrite_and_fallback_linking(caplog):
+def test_symbol_rewrite_and_linking(caplog):
     assert _force_inline("attributes #0 = { noinline }") == "attributes #0 = { alwaysinline }"
     assert _rename_exported_symbol("define void @old(i8* %x) { ret void }", "old", "new").startswith("define void @new")
     same_ir = "define void @same() { ret void }"
@@ -138,7 +138,7 @@ def test_post_compilation_symbol_rewrite_and_fallback_linking(caplog):
     assert "Failed to link FFI bitcode" in caplog.text
 
 
-def test_standalone_type_classes_and_llvm_utility_branches():
+def test_standalone_types():
     with CompilationContext():
         register_all()
         list_type = StandaloneListType(types.int64)
@@ -165,7 +165,7 @@ def test_standalone_type_classes_and_llvm_utility_branches():
             get_llvm_type_for_numba_dtype(types.unicode_type)
 
 
-def test_standalone_llvm_builder_helpers_emit_expected_ir():
+def test_llvm_builder_helpers():
     module, builder = make_builder()
     fnty = ir.FunctionType(i64(), [])
     declared = get_or_declare_function(module, "external_func", fnty)

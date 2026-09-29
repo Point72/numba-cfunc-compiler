@@ -33,7 +33,7 @@ class EnumSetVariableType(VariableType):
         return "enumset"
 
 
-def test_enum_representation_uses_configured_native_width():
+def test_enum_width():
     for bit_width, numba_type in [(8, types.int8), (16, types.int16), (32, types.int32), (64, types.int64)]:
         representation = EnumRepresentation(bit_width)
         assert representation.numba_type is numba_type
@@ -44,7 +44,7 @@ def test_enum_representation_uses_configured_native_width():
         EnumRepresentation(7)
 
 
-def test_enum_and_enumset_intrinsics_compile_with_their_native_abis():
+def test_enum_intrinsics():
     enum_func = cfunc(enum_representation.numba_type())(lambda: make_enum())
     assert enum_func.ctypes() == 0
 
@@ -52,7 +52,7 @@ def test_enum_and_enumset_intrinsics_compile_with_their_native_abis():
     assert f"store i{enumset_type.bit_width} 0" in enumset_func.inspect_llvm()
 
 
-def test_ffi_resolves_registered_return_types_and_generates_enumset_call():
+def test_enumset_ffi_call():
     with CompilationContext():
         register_all()
         TypeFactory.register(EnumSetVariableType)
@@ -69,7 +69,7 @@ def test_ffi_resolves_registered_return_types_and_generates_enumset_call():
         assert ast.unparse(call) == "ffi_tuple_args(1, make_enumset(), (holder,))"
 
 
-def test_ffi_converts_enumset_and_pointer_types_to_llvm():
+def test_ffi_llvm_types():
     assert FFIMethodHelper._numba_to_llvm_type(enumset_type) == enumset_type.llvm_type
     assert FFIMethodHelper._numba_to_llvm_type(types.CPointer(enumset_type)) == enumset_type.llvm_type.as_pointer()
     assert FFIMethodHelper._numba_to_llvm_type(types.CPointer(types.unicode_type)) is None

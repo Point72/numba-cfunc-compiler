@@ -86,7 +86,7 @@ def unparse(node: ast.AST) -> str:
     return ast.unparse(node)
 
 
-def test_datetime_and_timedelta_helpers_parse_and_lower():
+def test_time_type_lowering():
     aware = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     delta = timedelta(days=1, seconds=2, microseconds=3)
 
@@ -137,7 +137,7 @@ def test_datetime_and_timedelta_helpers_parse_and_lower():
         TimeDeltaType._parse_state_init(ast.Name(id="bad", ctx=ast.Load()), "span")
 
 
-def test_time_type_helper_accepts_safe_literals_and_rejects_other_nodes():
+def test_time_literals():
     assert TypeHelper.get_time_func_name(parse_expr("datetime(2020, 1, 1, tzinfo=timezone.utc)")) == "datetime"
     assert TypeHelper.get_time_func_name(parse_expr("datetime.datetime(2020, 1, 1, tzinfo=timezone.utc)")) == "datetime"
     assert TypeHelper.get_time_func_name(parse_expr("datetime.timedelta(seconds=1)")) == "timedelta"
@@ -156,7 +156,7 @@ def test_time_type_helper_accepts_safe_literals_and_rejects_other_nodes():
         TypeHelper.lower_time_constructor(parse_expr("datetime(2020, 1, 1)"))
 
 
-def test_numba_list_type_parses_inputs_state_and_lowering():
+def test_list_support():
     with default_context():
         marker = ListTypeMarker(int)
         list_type = NumbaListType(marker, [1, 2])
@@ -227,7 +227,7 @@ def test_numba_list_type_parses_inputs_state_and_lowering():
             NumbaListType.validate_input("values", [1, 2.0], marker)
 
 
-def test_numba_dict_type_parses_inputs_state_and_lowering():
+def test_dict_support():
     with default_context():
         marker = DictTypeMarker(int, float)
         dict_type = NumbaDictType(marker, {1: 2.5})
@@ -299,7 +299,7 @@ def test_numba_dict_type_parses_inputs_state_and_lowering():
             NumbaDictType.validate_input("values", {1: 2}, marker)
 
 
-def test_list_and_dict_for_loop_handlers_rewrite_supported_loops():
+def test_container_loops():
     with default_context():
         factory = VariableFactory()
         list_var = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "items")
@@ -365,7 +365,7 @@ class ExampleStructType(StructType):
         return 24
 
 
-def test_struct_type_and_attribute_helpers():
+def test_struct_helpers():
     with default_context():
         TypeFactory.register(ExampleStructType, priority=0)
         struct_type = ExampleStructType.from_type(ExampleStruct, UnknownNumbaValue())
@@ -423,7 +423,7 @@ def test_struct_type_and_attribute_helpers():
         assert struct_attr_handler(inference, struct_var, "nested", []) is None
 
 
-def test_models_type_factory_registry_and_source_registry():
+def test_models_and_registries():
     with default_context():
         inputs = InputAnalysis(
             {
@@ -559,7 +559,7 @@ def test_models_type_factory_registry_and_source_registry():
             SourceRegistry.register(DuplicateOrder())
 
 
-def test_ast_utilities_and_set_output_errors():
+def test_ast_utilities():
     with default_context():
         stmts = []
         add_statement_to_list(stmts, [ast.Pass(), ast.Pass()])
@@ -591,7 +591,7 @@ def test_ast_utilities_and_set_output_errors():
             AST.set_output(factory, None, ast.Constant("not_output"), ast.Constant(5))
 
 
-def test_variable_sources_and_factory_paths():
+def test_variable_factory():
     with default_context():
         int_type = TypeFactory.get_type(int, 1)
         source = VariableSource(int_type, "x")
@@ -703,7 +703,7 @@ def test_variable_sources_and_factory_paths():
             factory.copy_source(var, "x")
 
 
-def test_ffi_method_helper_and_method_factories():
+def test_ffi_methods():
     with default_context():
 
         class LLVMValue:
@@ -753,7 +753,7 @@ def test_ffi_method_helper_and_method_factories():
         assert "nounwind" in declared.attributes
 
 
-def test_ast_handler_registry_and_decorator_wrapper():
+def test_ast_handlers():
     with CompilationContext():
         assert ASTHandlerRegistry.get_handlers("Name", HandlerPhase.PRE) == []
         calls = []
@@ -810,7 +810,7 @@ def test_ast_handler_registry_and_decorator_wrapper():
         assert result.id == "decorated"
 
 
-def test_type_inference_assignment_and_call_paths():
+def test_type_inference():
     with default_context():
         factory = VariableFactory()
         inference = NumbaTypeInference(factory)
