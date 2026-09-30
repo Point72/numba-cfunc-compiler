@@ -113,14 +113,13 @@ def _static_index(node: ast.AST) -> int | None:
 def handle_array_subscript(converter, node: ast.Subscript):
     """Reject invalid compile-time indices before Numba erases literal types."""
     if not isinstance(node.value, ast.Name):
-        return None
+        return
     var = converter.variable_factory.from_name(node.value.id)
     if var is None or not isinstance(var.type, NumbaArrayType):
-        return None
+        return
     index = _static_index(node.slice)
     if index is not None and not -var.type.value.length <= index < var.type.value.length:
         raise IndexError(f"Constant array index {index} is out of range for length {var.type.value.length}")
-    return None
 
 
 def handle_array_for(converter, node: ast.For):

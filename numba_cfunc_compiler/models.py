@@ -10,8 +10,8 @@ from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
     # Constants
-    "ArrayTypeMarker",
     "CONTAINER_STATE_INIT",
+    "ArrayTypeMarker",
     "ContainerType",
     "DictTypeMarker",
     # Analysis results

@@ -11,8 +11,8 @@ from numba_cfunc_compiler.numba_methods import numba_method
 from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 
 __all__ = (
-    "NumbaConfig",
     "NumbaArray",
+    "NumbaConfig",
     "NumbaDict",
     "NumbaList",
     "NumbaTypeInfo",
