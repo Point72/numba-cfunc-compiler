@@ -22,6 +22,7 @@ __all__ = [
 class SourceCategoryId(Enum):
     """Built-in source category identifiers."""
 
+    CONSTANT_CONTAINER = auto()
     CONSTANT = auto()
     OUTPUT = auto()
     STATE = auto()

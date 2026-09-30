@@ -83,14 +83,13 @@ class NumbaDictType(ContainerType):
 
     def read_constant(self, local_var_name: str):
         """Create a standalone dict and populate it with constant values."""
-        items = list(self.runtime_value.items())
         if not isinstance(self.value, DictTypeMarker):
             raise TypeError(f"Expected DictTypeMarker, got {type(self.value)}")
+        return self.create_new_container(local_var_name) + self.populate_constant(local_var_name)
 
-        # Create the dict using the type's create_new_container method
-        stmts = self.create_new_container(local_var_name)
-
-        # Set each key-value pair
+    def populate_constant(self, local_var_name: str) -> list[ast.stmt]:
+        items = list(self.runtime_value.items())
+        stmts = []
         for k, v in items:
             stmts.append(
                 ast.Assign(
@@ -104,8 +103,18 @@ class NumbaDictType(ContainerType):
                     value=ast.Constant(value=v),
                 )
             )
-
         return stmts
+
+    def reset_constant(self, local_var_name: str) -> list[ast.stmt]:
+        return [
+            ast.Expr(
+                value=AST.function_call(
+                    "standalone_dict_clear",
+                    ast.Name(id=local_var_name, ctx=ast.Load()),
+                )
+            ),
+            *self.populate_constant(local_var_name),
+        ]
 
     @classmethod
     def is_type_supported(cls, var_type: Any) -> bool:
@@ -212,7 +221,8 @@ class NumbaDictType(ContainerType):
             raise TypeError(f"Unsupported NumbaDict value type: {val_type}. Supported: {[t.__name__ for t in allowed_vals]}")
 
         return ParameterInfo(
-            expected_type=DictTypeMarker(key_type, val_type)  # defaults to category="constant"
+            expected_type=DictTypeMarker(key_type, val_type),
+            category="constant_container",
         )
 
     @classmethod

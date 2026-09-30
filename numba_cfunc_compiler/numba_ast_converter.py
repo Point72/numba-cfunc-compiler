@@ -1,5 +1,4 @@
 import ast
-import copy
 
 from numba_cfunc_compiler.defaults.struct_support import StructType
 from numba_cfunc_compiler.models import (
@@ -72,14 +71,18 @@ class NumbaASTConverter(ast.NodeTransformer):
 
         # Group variables by their category's init_filter
         top_body = []
-        execute_init_body = []
+        execution_body = []
         container_state_vars = []
+        constant_container_vars = []
 
         for category in SourceRegistry.get_ordered():
             if category.init_filter == SourceInitFilter.NEVER:
                 continue
             for var in self.variable_factory.get_by_category(category.id):
                 if category.init_filter == SourceInitFilter.EVERYTIME:
+                    if category.id == SourceCategoryId.CONSTANT_CONTAINER:
+                        constant_container_vars.append(var)
+                        continue
                     if category.id == SourceCategoryId.STATE and isinstance(var.type, ContainerType):
                         container_state_vars.append(var)
                         continue
@@ -91,40 +94,34 @@ class NumbaASTConverter(ast.NodeTransformer):
                     init = var.read()
                     if init is None:
                         continue
-                    add_statement_to_list(execute_init_body, init)
+                    add_statement_to_list(execution_body, init)
+
+        container_vars = container_state_vars + constant_container_vars
+        transformed_start_body = ContainerType.emit_container_state_init(container_vars)
+        execution_body.extend(ContainerType.emit_container_state_load(container_vars))
+        transformed_stop_body = ContainerType.emit_container_state_load(container_vars)
+        for var in constant_container_vars:
+            transformed_start_body.extend(var.type.populate_constant(var.local_variable_name()))
+            execution_body.extend(var.type.reset_constant(var.local_variable_name()))
+            transformed_stop_body.extend(var.type.reset_constant(var.local_variable_name()))
 
         # Transform user's start_body statements
-        transformed_start_body = []
         for stmt in self.start_body:
             transformed_stmt = self.visit(stmt)
             add_statement_to_list(transformed_start_body, transformed_stmt)
 
         # Transform user's stop_body statements
-        transformed_stop_body = []
         for stmt in self.stop_body:
             transformed_stmt = self.visit(stmt)
             add_statement_to_list(transformed_stop_body, transformed_stmt)
 
         # Transform user's execution body
-        execution_body = []
         for stmt in node.body:
             transformed_stmt = self.visit(stmt)
             add_statement_to_list(execution_body, transformed_stmt)
 
-        # Container state: init in start phase, load in execute phase
-        if container_state_vars:
-            # Prepend container initialization to start_body
-            container_init = ContainerType.emit_container_state_init(container_state_vars)
-            transformed_start_body = container_init + transformed_start_body
-
-            # Prepend container loading to execution_body
-            container_load = ContainerType.emit_container_state_load(container_state_vars)
-            execution_body = copy.deepcopy(container_load) + execution_body
-
-            # STOP needs typed container values for user cleanup code, then must
-            # release the native allocations before the host drops its slots.
-            container_free = ContainerType.emit_container_state_free(container_state_vars)
-            transformed_stop_body = container_load + transformed_stop_body + container_free
+        # Release containers after user's stop_body.
+        transformed_stop_body.extend(ContainerType.emit_container_state_free(container_vars))
 
         # Build the lifecycle-aware body
         lifecycle_body = []
@@ -161,7 +158,7 @@ class NumbaASTConverter(ast.NodeTransformer):
                 ops=[ast.Eq()],
                 comparators=[ast.Constant(value=LIFECYCLE_EXECUTE)],
             ),
-            body=(execute_init_body + execution_body) if (execute_init_body or execution_body) else [ast.Pass()],
+            body=execution_body or [ast.Pass()],
             orelse=[],
         )
         lifecycle_body.append(exec_if)

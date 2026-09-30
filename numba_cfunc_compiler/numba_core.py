@@ -11,7 +11,9 @@ from numba import cfunc, float64, int8, int64
 from numba.types import CPointer
 
 from numba_cfunc_compiler.compilation_context import CompilationContext
+from numba_cfunc_compiler.defaults.struct_support import StructType
 from numba_cfunc_compiler.function_analyzer import FunctionAnalyzer
+from numba_cfunc_compiler.models import ContainerType, VariableType
 from numba_cfunc_compiler.numba_ast_converter import NumbaASTConverter
 from numba_cfunc_compiler.post_compilation import (
     CompilationOptions,
@@ -22,6 +24,7 @@ from numba_cfunc_compiler.standalone.dict import (
     _standalone_dict_iter_begin,
     _standalone_dict_iter_next_item,
     _standalone_dict_iter_next_key,
+    standalone_dict_clear,
     standalone_dict_free,
     standalone_dict_from_voidptr,
     standalone_dict_length,
@@ -32,6 +35,7 @@ from numba_cfunc_compiler.standalone.list import (
     standalone_list_free,
     standalone_list_from_voidptr,
     standalone_list_new,
+    standalone_list_reset_size,
     standalone_list_to_voidptr,
 )
 from numba_cfunc_compiler.utils.ast import AST
@@ -54,10 +58,8 @@ class CompilationResult:
     """Result of create_compiled_func — contains the compiled cfunc and all metadata
     needed by the host framework to wire the node.
 
-    Core fields are always present.  Category-specific metadata (e.g.
-    ``ordered_input_signals``, ``nrt_state_indices``) lives in the
-    ``metadata`` dict, keyed by the strings documented in each built-in
-    :class:`SourceCategory`.
+    Core fields are always present. State storage and category-specific metadata
+    (e.g. ``ordered_input_signals``) live in the ``metadata`` dict.
     """
 
     compiled_func: Any
@@ -157,6 +159,7 @@ class NumbaFunctionInfo:
         self.input_analysis = self.analyzer.parse_input_annotation(self.sig, dict(bound.arguments))
         self.output_analysis = self.analyzer.parse_output_annotation(self.tree, self.sig)
         self.state_analysis = self.analyzer.parse_state_annotation(self.tree, self._func_globals)
+        self.state_slots: list[tuple[Any, VariableType]] = []
         self.variable_factory = self._create_variable_factory()
 
     def _create_variable_factory(self) -> VariableFactory:
@@ -269,11 +272,13 @@ def create_compiled_func(
             "standalone_list_new": standalone_list_new,
             "standalone_list_from_voidptr": standalone_list_from_voidptr,
             "standalone_list_free": standalone_list_free,
+            "standalone_list_reset_size": standalone_list_reset_size,
             "standalone_list_to_voidptr": standalone_list_to_voidptr,
             # standalone dict (NRT-free)
             "standalone_dict_new": standalone_dict_new,
             "standalone_dict_from_voidptr": standalone_dict_from_voidptr,
             "standalone_dict_free": standalone_dict_free,
+            "standalone_dict_clear": standalone_dict_clear,
             "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
             "standalone_dict_length": standalone_dict_length,
             "_standalone_dict_iter_begin": _standalone_dict_iter_begin,
@@ -296,8 +301,22 @@ def create_compiled_func(
         output_types = list(info.output_analysis.output_types)
         named_outputs = None
 
-    # Collect metadata from all registered source categories
-    result_metadata: dict = {}
+    # Collect storage metadata and metadata from registered source categories.
+    nrt_indices = []
+    struct_indices = []
+    struct_sizes = []
+    for index, (_, var_type) in enumerate(info.state_slots):
+        if isinstance(var_type, ContainerType):
+            nrt_indices.append(index)
+        elif isinstance(var_type, StructType):
+            struct_indices.append(index)
+            struct_sizes.append(var_type.get_size())
+    result_metadata = {
+        "state_values": tuple(value for value, _ in info.state_slots),
+        "nrt_state_indices": tuple(nrt_indices),
+        "struct_state_indices": tuple(struct_indices),
+        "struct_state_sizes": tuple(struct_sizes),
+    }
     for category in SourceRegistry.get_ordered():
         result_metadata.update(category.get_result_metadata(info))
 
