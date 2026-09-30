@@ -95,6 +95,7 @@ skip = "*win32 *arm_64"
 
 [tool.coverage.run]
 branch = true
+omit = ["numba_cfunc_compiler/tests/*"]
 
 [tool.coverage.report]
 exclude_also = [
@@ -103,7 +104,7 @@ exclude_also = [
     "@(abc\\.)?abstractmethod",
 ]
 ignore_errors = true
-fail_under = 45
+fail_under = 80
 
 [tool.hatch.build]
 artifacts = [
@@ -145,6 +146,8 @@ line-length = 150
 [tool.ruff.lint]
 extend-select = [
     "I",
+    "PLC0414",
+    "RUF022",
 ]
 
 [tool.ruff.lint.isort]

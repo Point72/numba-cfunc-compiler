@@ -23,6 +23,7 @@ install:  ## install python library
 #########
 .PHONY: lint-py lint-cpp lint-docs lint lints
 lint-py:  ## run python linter with ruff
+	python -m ruff --version
 	python -m ruff check numba_cfunc_compiler
 	python -m ruff format --check numba_cfunc_compiler
 

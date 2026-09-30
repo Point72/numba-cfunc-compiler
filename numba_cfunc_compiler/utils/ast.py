@@ -5,10 +5,8 @@ from llvmlite import ir
 from numba import TypingError, types
 from numba.extending import intrinsic
 
-from numba_cfunc_compiler.numba_config import (
-    TICKED_OUTPUTS_ARRAY_NAME,
-    NumbaTypeRegistry,
-)
+from numba_cfunc_compiler.compiler_constants import TICKED_OUTPUTS_ARRAY_NAME
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 __all__ = [
     "AST",
@@ -107,7 +105,7 @@ class AST:
         value_expr = var.get()
 
         # Write the value and mark the output as ticked
-        statements.append(output_var.write(value_expr))
+        statements.append(output_var.write(value_expr, var.type))
         tick_lhs = AST.array_access(TICKED_OUTPUTS_ARRAY_NAME, idx)
         statements.append(AST.assignment(tick_lhs, ast.Constant(1)))
         return statements

@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 import unittest
 
-from numba_cfunc_compiler.numba_config import State
+from numba_cfunc_compiler.node_api import State
 from numba_cfunc_compiler.tests.harness import Signal, compile_function, numba_node
 
 

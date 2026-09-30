@@ -59,7 +59,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.stop_body = stop_body or []
 
     def visit_FunctionDef(self, node):
-        from numba_cfunc_compiler.numba_config import (
+        from numba_cfunc_compiler.compiler_constants import (
             LIFECYCLE_EXECUTE,
             LIFECYCLE_PARAM_NAME,
             LIFECYCLE_START,
@@ -195,7 +195,7 @@ class NumbaASTConverter(ast.NodeTransformer):
                 continue
 
             value = var.get()
-            statements.append(output_var.write(value))
+            statements.append(output_var.write(value, var.type))
             statements.append(output_var.call("output", None))
 
         # Add a void return at the end

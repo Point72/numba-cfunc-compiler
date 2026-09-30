@@ -49,7 +49,7 @@ with CompilationContext() as ctx:
         options=CompilationOptions(fastmath=True, force_inline=True),
     )
     # result.compiled_func        — the Numba cfunc
-    # result.native_name          — exported entry-point name (_gc_numba_<semantic_key>)
+    # result.native_name          — exported entry-point name (_ncc_numba_<semantic_key>)
     # result.semantic_key         — deterministic hash of transformed code + cfunc signature/options
     # result.llvm_ir              — final LLVM IR after exported-symbol rewrite and optional transforms
     # result.output_types / .named_outputs
@@ -59,6 +59,18 @@ with CompilationContext() as ctx:
 ```
 
 All registrations are scoped to the active `CompilationContext`. When the `with` block exits, the previous context is restored. If no explicit context exists, `CompilationContext.current()` lazily creates a default with all built-in types.
+
+The native ABI defaults to 16-bit enums and 128-bit enumsets. If your host uses different widths, set them before entering a context or compiling:
+
+```python
+from numba_cfunc_compiler import set_numba_config
+
+set_numba_config(enum_bit_width=32, enumset_bit_width=64)
+```
+
+`get_numba_config()` returns the frozen configuration. The enum width must be 8, 16, 32, or 64 bits, and the enumset width must be a positive multiple of 8 bits. The first use selects the defaults or your override for the life of the process; later setter calls raise `RuntimeError`. Imports and context construction can occur before selection.
+
+The compiler's modules separate process-wide settings (`config`), node syntax (`node_api`), context-scoped type registration (`type_registry`), and generated-code names (`compiler_constants`). Existing imports from `numba_config` remain available as compatibility aliases.
 
 `CompilationResult` stores category-specific metadata in `result.metadata`, and also exposes those keys through attribute access for convenience. Custom source categories can add fields such as `ordered_input_signals` by implementing `get_result_metadata()`.
 
@@ -324,7 +336,7 @@ result = create_compiled_func(func, *args, options=opts, ...)
 
 **`force_inline`** *(post-compilation)* — Replaces Numba's `noinline` attribute on the cfunc wrapper with `alwaysinline`, letting the LLVM optimizer inline the function body into the wrapper and eliminate the extra call.
 
-Regardless of options, the exported wrapper symbol is renamed to `_gc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
+Regardless of options, the exported wrapper symbol is renamed to `_ncc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
 
 ### FFI Optimization
 

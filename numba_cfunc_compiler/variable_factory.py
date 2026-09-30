@@ -3,15 +3,13 @@ import copy
 from collections import defaultdict
 from typing import Any
 
+from numba_cfunc_compiler.compiler_constants import OUTPUTS_ARRAY_NAME
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.models import (
     ContainerType,
     UnknownNumbaType,
     UnknownType,
     VariableType,
-)
-from numba_cfunc_compiler.numba_config import (
-    OUTPUTS_ARRAY_NAME,
 )
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST
@@ -158,20 +156,52 @@ class OutputSource(VoidPtrSource):
     def local_variable_name(self):
         return f"output_{self.array_idx}_ptr"
 
-    def write(self, value: Any):
+    def write(self, value: Any, value_type: VariableType | None = None):
         """
         Create: output_(output_idx)_ptr[0] = value
+
+        Struct outputs are opaque pointers rather than scalar values.  Copy
+        their bytes into the host-owned output buffer instead of attempting to
+        subscript and assign through a void pointer.
         """
+        from numba_cfunc_compiler.defaults.struct_support import StructType
+
+        if isinstance(self.type, StructType):
+            if not isinstance(value_type, StructType):
+                actual_type = getattr(value_type, "value", value_type)
+                raise TypeError(f"Return value at position {self.array_idx} has type {actual_type}, expected struct {self.type.value}")
+            if value_type.value is not self.type.value:
+                raise TypeError(f"Return value at position {self.array_idx} has struct type {value_type.value}, expected {self.type.value}")
+
+            output_size = self.type.get_size()
+            value_size = value_type.get_size()
+            if output_size <= 0:
+                raise TypeError(f"Struct output {self.type.value} has invalid size {output_size}")
+            if value_size != output_size:
+                raise TypeError(f"Return value at position {self.array_idx} has struct size {value_size}, expected {output_size}")
+
+            copy_call = AST.function_call(
+                "struct_memcpy",
+                ast.Name(id=self.local_variable_name(), ctx=ast.Load()),
+                value,
+                ast.Constant(value=output_size),
+            )
+            return ast.Expr(value=copy_call)
+
         if isinstance(self.type, PrimitiveType):
-            value_type = None
-            if isinstance(value, ast.Constant):
-                value_type = type(value.value)
-            elif isinstance(value, ast.Name):
+            python_value_type = getattr(value_type, "value", None)
+            if python_value_type is None and isinstance(value, ast.Constant):
+                python_value_type = type(value.value)
+            elif python_value_type is None and isinstance(value, ast.Name):
                 var = self.variable_factory.from_name(value.id)
                 if var is not None:
-                    value_type = var.type.value
-            if value_type is not None and not isinstance(value_type, UnknownNumbaType) and not self.type.accepts_value_type(value_type):
-                raise TypeError(f"Return value at position {self.array_idx} has type {value_type}, expected {self.type.value}")
+                    python_value_type = var.type.value
+            if (
+                python_value_type is not None
+                and not isinstance(python_value_type, UnknownNumbaType)
+                and not self.type.accepts_value_type(python_value_type)
+            ):
+                raise TypeError(f"Return value at position {self.array_idx} has type {python_value_type}, expected {self.type.value}")
         output_ptr_value = AST.deref_pointer(self.local_variable_name())
         return AST.assignment(output_ptr_value, value)
 

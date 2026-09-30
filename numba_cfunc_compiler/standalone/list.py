@@ -20,7 +20,6 @@ from numba.core import types
 from numba.core.datamodel import models
 from numba.extending import intrinsic, overload, overload_method, register_model
 
-from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
 from numba_cfunc_compiler.standalone.utils import (
     convert_to_i8,
     convert_to_i64,
@@ -30,6 +29,7 @@ from numba_cfunc_compiler.standalone.utils import (
     i32,
     i64,
 )
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 
 # Typing for StandaloneListType

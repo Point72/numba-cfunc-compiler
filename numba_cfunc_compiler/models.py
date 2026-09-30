@@ -4,10 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from numba_cfunc_compiler.numba_config import (
-    STATE_ARRAY_NAME,
-    NumbaTypeRegistry,
-)
+from numba_cfunc_compiler.compiler_constants import STATE_ARRAY_NAME
+from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
@@ -194,8 +192,6 @@ class VariableType(ABC):
         override this if their storage size differs from the numba type
         (which is unusual).
         """
-        from numba_cfunc_compiler.numba_config import NumbaTypeRegistry
-
         instance = cls.from_type(var_type, UnknownNumbaValue())
         if instance is None:
             raise ValueError(f"{cls.__name__} cannot determine size for {var_type}")
@@ -296,7 +292,7 @@ class ContainerType(VariableType):
         statements: list[ast.stmt] = []
         for v in standalone_state_vars:
             state_slot = AST.array_access(state_array_name, v.array_idx)
-            loaded_name = f"_gc_standalone_loaded_{v.array_idx}"
+            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
             statements.extend(v.type.init_statements(v.name, loaded_name, state_slot))
         return statements
 
@@ -307,7 +303,7 @@ class ContainerType(VariableType):
             return []
         statements: list[ast.stmt] = []
         for v in standalone_state_vars:
-            loaded_name = f"_gc_standalone_loaded_{v.array_idx}"
+            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
             state_slot = AST.array_access(state_array_name, v.array_idx)
             statements.append(AST.assignment(loaded_name, state_slot))
             statements.extend(

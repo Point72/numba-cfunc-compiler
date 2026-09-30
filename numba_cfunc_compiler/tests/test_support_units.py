@@ -37,20 +37,20 @@ from numba_cfunc_compiler.models import (
     UnknownNumbaType,
     UnknownNumbaValue,
     UnknownType,
+    VariableType,
 )
-from numba_cfunc_compiler.numba_config import (
+from numba_cfunc_compiler.node_api import (
     NumbaDict,
     NumbaList,
-    NumbaTypeInfo,
-    NumbaTypeRegistry,
     create_new_dict,
     create_new_list,
-    numba_type_to_python,
 )
 from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 from numba_cfunc_compiler.source_registry import CfuncParam, SourceCategory, SourceInitFilter, SourceRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
+from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
 from numba_cfunc_compiler.utils.ast import AST, add_statement_to_list
+from numba_cfunc_compiler.utils.enum import enum_representation
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 from numba_cfunc_compiler.utils.types import TypeHelper
 from numba_cfunc_compiler.variable_factory import (
@@ -86,7 +86,7 @@ def unparse(node: ast.AST) -> str:
     return ast.unparse(node)
 
 
-def test_datetime_and_timedelta_helpers_parse_and_lower():
+def test_datetime_timedelta():
     aware = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     delta = timedelta(days=1, seconds=2, microseconds=3)
 
@@ -137,7 +137,7 @@ def test_datetime_and_timedelta_helpers_parse_and_lower():
         TimeDeltaType._parse_state_init(ast.Name(id="bad", ctx=ast.Load()), "span")
 
 
-def test_time_type_helper_accepts_safe_literals_and_rejects_other_nodes():
+def test_time_literals():
     assert TypeHelper.get_time_func_name(parse_expr("datetime(2020, 1, 1, tzinfo=timezone.utc)")) == "datetime"
     assert TypeHelper.get_time_func_name(parse_expr("datetime.datetime(2020, 1, 1, tzinfo=timezone.utc)")) == "datetime"
     assert TypeHelper.get_time_func_name(parse_expr("datetime.timedelta(seconds=1)")) == "timedelta"
@@ -156,7 +156,7 @@ def test_time_type_helper_accepts_safe_literals_and_rejects_other_nodes():
         TypeHelper.lower_time_constructor(parse_expr("datetime(2020, 1, 1)"))
 
 
-def test_numba_list_type_parses_inputs_state_and_lowering():
+def test_list_type():
     with default_context():
         marker = ListTypeMarker(int)
         list_type = NumbaListType(marker, [1, 2])
@@ -227,7 +227,7 @@ def test_numba_list_type_parses_inputs_state_and_lowering():
             NumbaListType.validate_input("values", [1, 2.0], marker)
 
 
-def test_numba_dict_type_parses_inputs_state_and_lowering():
+def test_dict_type():
     with default_context():
         marker = DictTypeMarker(int, float)
         dict_type = NumbaDictType(marker, {1: 2.5})
@@ -299,7 +299,7 @@ def test_numba_dict_type_parses_inputs_state_and_lowering():
             NumbaDictType.validate_input("values", {1: 2}, marker)
 
 
-def test_list_and_dict_for_loop_handlers_rewrite_supported_loops():
+def test_container_loops():
     with default_context():
         factory = VariableFactory()
         list_var = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "items")
@@ -365,7 +365,7 @@ class ExampleStructType(StructType):
         return 24
 
 
-def test_struct_type_and_attribute_helpers():
+def test_struct_helpers():
     with default_context():
         TypeFactory.register(ExampleStructType, priority=0)
         struct_type = ExampleStructType.from_type(ExampleStruct, UnknownNumbaValue())
@@ -378,6 +378,30 @@ def test_struct_type_and_attribute_helpers():
         assert struct_type.get_size() == 24
         assert is_struct_type(struct_type)
         assert not is_struct_type(TypeFactory.get_type(int))
+
+        output = OutputSource(0, struct_type, "result")
+        assert unparse(output.write(ast.Name(id="order", ctx=ast.Load()), struct_type)) == ("struct_memcpy(output_0_ptr, order, 24)")
+        with pytest.raises(TypeError, match="expected struct"):
+            output.write(ast.Constant(1), TypeFactory.get_type(int))
+
+        class OtherStruct:
+            pass
+
+        other_type = StructType(OtherStruct, UnknownNumbaValue(), fields={}, size=24)
+        with pytest.raises(TypeError, match="struct type"):
+            output.write(ast.Name(id="other", ctx=ast.Load()), other_type)
+
+        wrong_size_type = StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=8)
+        with pytest.raises(TypeError, match="struct size"):
+            output.write(ast.Name(id="order", ctx=ast.Load()), wrong_size_type)
+
+        invalid_output = OutputSource(
+            0,
+            StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=0),
+            "result",
+        )
+        with pytest.raises(TypeError, match="invalid size"):
+            invalid_output.write(ast.Name(id="order", ctx=ast.Load()), invalid_output.type)
 
         assert unparse(struct_type.get_field("order", "price")) == "struct_field_access(order, 0, 'float64')"
         assert unparse(struct_type.get_field(ast.Name(id="ptr", ctx=ast.Load()), "count")) == "struct_field_access(ptr, 8, 'int64')"
@@ -423,7 +447,7 @@ def test_struct_type_and_attribute_helpers():
         assert struct_attr_handler(inference, struct_var, "nested", []) is None
 
 
-def test_models_type_factory_registry_and_source_registry():
+def test_models_and_registries():
     with default_context():
         inputs = InputAnalysis(
             {
@@ -499,12 +523,20 @@ def test_models_type_factory_registry_and_source_registry():
         assert NumbaTypeRegistry.get_supported_type_names()["int"] is int
         assert NumbaTypeRegistry.is_supported_type(int)
         assert not NumbaTypeRegistry.is_supported_type(str)
+
+        class BytesType(VariableType):
+            @classmethod
+            def is_type_supported(cls, var_type):
+                return var_type is bytes
+
+        TypeFactory.register(BytesType)
+        assert NumbaTypeRegistry.is_supported_type(bytes)
         assert NumbaTypeRegistry.get_list_element_types() == (int, float, bool)
         assert NumbaTypeRegistry.get_dict_key_types() == (int,)
         assert NumbaTypeRegistry.get_dict_value_types() == (int, float, bool)
         assert NumbaTypeRegistry.get_numba_type_map((int, str)) == {"int64": types.int64}
-        assert NumbaTypeRegistry.cpp_type_to_numba_name("DOUBLE") == "float64"
-        assert NumbaTypeRegistry.cpp_type_to_numba_name("UNKNOWN") == "voidptr"
+        assert NumbaTypeRegistry.get_numba_type("enum") is enum_representation.numba_type
+        assert NumbaTypeRegistry.get_size_for_numba_name("enum") == enum_representation.byte_width
         with pytest.raises(KeyError):
             NumbaTypeRegistry.get_numba_type("missing")
         with pytest.raises(KeyError):
@@ -516,11 +548,6 @@ def test_models_type_factory_registry_and_source_registry():
 
         NumbaTypeRegistry.register_type(NumbaTypeInfo(str, "unicode", types.unicode_type, 8, False, False, "str"))
         assert NumbaTypeRegistry.get_by_python_type(str).numba_name == "unicode"
-
-        assert numba_type_to_python(types.int64) is int
-        assert numba_type_to_python(types.float64) is float
-        assert numba_type_to_python(types.boolean) is bool
-        assert numba_type_to_python(types.unicode_type) is types.unicode_type
 
         with pytest.raises(NotImplementedError):
             create_new_list(int)
@@ -556,7 +583,7 @@ def test_models_type_factory_registry_and_source_registry():
             SourceRegistry.register(DuplicateOrder())
 
 
-def test_ast_utilities_and_set_output_errors():
+def test_ast_utilities():
     with default_context():
         stmts = []
         add_statement_to_list(stmts, [ast.Pass(), ast.Pass()])
@@ -588,7 +615,7 @@ def test_ast_utilities_and_set_output_errors():
             AST.set_output(factory, None, ast.Constant("not_output"), ast.Constant(5))
 
 
-def test_variable_sources_and_factory_paths():
+def test_variable_sources():
     with default_context():
         int_type = TypeFactory.get_type(int, 1)
         source = VariableSource(int_type, "x")
@@ -614,6 +641,11 @@ def test_variable_sources_and_factory_paths():
         assert unparse(output.write(ast.Constant(3))) == "output_0_ptr[0] = 3"
         with pytest.raises(TypeError, match="Return value"):
             output.write(ast.Constant(3.14))
+        output_factory = VariableFactory()
+        output_factory.add_variable(output)
+        output_factory.add_variable(LocalVariableSource(TypeFactory.get_type(float), "local_float"))
+        with pytest.raises(TypeError, match="Return value"):
+            output.write(ast.Name(id="local_float", ctx=ast.Load()))
 
         local = LocalVariableSource(int_type, "local")
         assert unparse(local.get()) == "local"
@@ -700,7 +732,7 @@ def test_variable_sources_and_factory_paths():
             factory.copy_source(var, "x")
 
 
-def test_ffi_method_helper_and_method_factories():
+def test_ffi_methods():
     with default_context():
 
         class LLVMValue:
@@ -726,6 +758,8 @@ def test_ffi_method_helper_and_method_factories():
         assert FFIMethodHelper.get_return_type(types.int64).value == 1
         assert unparse(FFIMethodHelper.get_return_type(types.voidptr)) == "voidptr_null()"
         assert unparse(FFIMethodHelper.get_return_type(types.int8)) == "make_int8()"
+        assert unparse(FFIMethodHelper.get_return_type(enum_representation.numba_type)) == "make_enum()"
+        assert FFIMethodHelper._numba_to_llvm_type(enum_representation.numba_type) == enum_representation.llvm_type
         with pytest.raises(ValueError, match="Unsupported return type"):
             FFIMethodHelper.get_return_type(types.unicode_type)
 
@@ -748,7 +782,7 @@ def test_ffi_method_helper_and_method_factories():
         assert "nounwind" in declared.attributes
 
 
-def test_ast_handler_registry_and_decorator_wrapper():
+def test_ast_handlers():
     with CompilationContext():
         assert ASTHandlerRegistry.get_handlers("Name", HandlerPhase.PRE) == []
         calls = []
@@ -805,7 +839,7 @@ def test_ast_handler_registry_and_decorator_wrapper():
         assert result.id == "decorated"
 
 
-def test_type_inference_assignment_and_call_paths():
+def test_type_inference():
     with default_context():
         factory = VariableFactory()
         inference = NumbaTypeInference(factory)

@@ -39,19 +39,35 @@ class FFIMethodHelper:
     def get_return_type(numba_type) -> ast.AST:
         """Hacky way of specifying the return type for an ffi call"""
         from numba_cfunc_compiler.utils.ast import AST
+        from numba_cfunc_compiler.utils.enum import enum_representation
+        from numba_cfunc_compiler.utils.enumset import enumset_type
 
         mapping = {
             types.float64: ast.Constant(value=1.0),
             types.int64: ast.Constant(value=1),
             # Return an AST node whose inferred Numba type is voidptr.
             types.voidptr: AST.function_call("voidptr_null"),
-            # if the ffi function returns an Enum, it will be represented as an int8
+            # bool and other explicitly int8-backed values
             types.int8: AST.function_call("make_int8"),
+            enum_representation.numba_type: AST.function_call("make_enum"),
+            enumset_type: AST.function_call("make_enumset"),
         }
         node = mapping.get(numba_type)
         if node is None:
             raise ValueError(f"Unsupported return type: {numba_type}")
         return node
+
+    @staticmethod
+    def resolve_return_type(return_type):
+        """Resolve an FFI return annotation, including registered custom value types."""
+        from numba_cfunc_compiler.models import UnknownType
+        from numba_cfunc_compiler.type_factory import TypeFactory
+        from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
+
+        variable_type = TypeFactory.get_type(return_type)
+        if not isinstance(variable_type, UnknownType):
+            return NumbaTypeRegistry.get_numba_type(variable_type.get_numba_type_name())
+        return NumbaTypeRegistry.resolve_to_numba_type(return_type)
 
     @staticmethod
     def ffi_call(return_type, obj_ptr, method_name: str, args: list | None = None) -> ast.Call:
@@ -76,6 +92,9 @@ class FFIMethodHelper:
     @staticmethod
     def _numba_to_llvm_type(numba_type) -> Any | None:
         """Translate a Numba type to an llvmlite.ir type. Returns None for unsupported/literal string types."""
+        from numba_cfunc_compiler.utils.enum import enum_representation
+        from numba_cfunc_compiler.utils.enumset import enumset_type
+
         NUMBA_TO_LLVM_TYPE = {
             types.int64: ir.IntType(64),
             types.int32: ir.IntType(32),
@@ -84,9 +103,13 @@ class FFIMethodHelper:
             types.float32: ir.FloatType(),
             types.boolean: ir.IntType(8),
             types.voidptr: ir.IntType(8).as_pointer(),
-            types.CPointer: lambda x: x.dtype.as_pointer(),
+            enum_representation.numba_type: enum_representation.llvm_type,
+            enumset_type: enumset_type.llvm_type,
         }
-        return NUMBA_TO_LLVM_TYPE.get(numba_type, None)
+        if isinstance(numba_type, types.CPointer):
+            dtype = FFIMethodHelper._numba_to_llvm_type(numba_type.dtype)
+            return dtype.as_pointer() if dtype is not None else None
+        return NUMBA_TO_LLVM_TYPE.get(numba_type)
 
     @staticmethod
     def numba_to_llvm_sig(numba_sig) -> ir.FunctionType:
@@ -123,19 +146,6 @@ class FFIMethodHelper:
         func.attributes.add("readonly")
         func.attributes.add("nounwind")
         return func
-
-    @staticmethod
-    def _llvm_call_from_signature(context, builder, signature, args):
-        """
-        Helper to perform the LLVM call for ffi intrinsics.
-        Expects args layout: [method_opcode, ret_type, <dynamic args...>]
-        """
-        method_opcode = args[0]
-        dyn_args = args[2:]
-        llvm_sig = FFIMethodHelper.numba_to_llvm_sig(signature)
-        method_name = FFIMethodHelper.opcode_to_name(method_opcode)
-        func = FFIMethodHelper._get_or_declare_function(builder.module, method_name, llvm_sig)
-        return builder.call(func, dyn_args)
 
     @staticmethod
     def register_ffi_symbols(symbol_names: list[str], library_module) -> None:
