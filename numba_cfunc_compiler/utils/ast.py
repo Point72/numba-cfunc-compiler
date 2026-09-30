@@ -100,9 +100,7 @@ class AST:
         idx = output_var.array_idx
 
         statements: list[ast.stmt] = []
-        from numba_cfunc_compiler.defaults.struct_support import StructType
-
-        if isinstance(output_var.type, StructType) and output_var.type.typed_view:
+        if output_var.uses_numba_output_type():
             value_expr = variable_factory.lower_value_expression(visitor, value_node, statements)
             statements.append(output_var.write(value_expr))
         else:

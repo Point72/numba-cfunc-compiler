@@ -52,6 +52,7 @@ class VariableSource:
         self.category: Any = None  # Set by VariableFactory.add_variable
         supported_methods = supported_methods or []
         supported_methods = supported_methods + type.get_methods()
+        self._has_ast_methods = bool(supported_methods)
         self.handler = method_handler_factory(self.__class__.__name__, supported_methods)
 
     def local_variable_name(self):
@@ -68,6 +69,9 @@ class VariableSource:
 
     def get(self):
         raise NotImplementedError(f"get method not implemented for {self.name}")
+
+    def read_value(self):
+        return self.get()
 
     def call(self, method, *args):
         return self.handler.handle(method, self, *args)
@@ -145,6 +149,12 @@ class VoidPtrSource(VariableSource):
         # for other types we dereference the pointer
         return AST.deref_pointer(self.local_variable_name())
 
+    def read_value(self):
+        value = self.get()
+        if isinstance(self.type, PrimitiveType) and self.type.value is bool:
+            return ast.Compare(left=value, ops=[ast.NotEq()], comparators=[ast.Constant(value=0)])
+        return value
+
 
 class OutputSource(VoidPtrSource):
     def __init__(self, array_idx: int, type: VariableType, name: str):
@@ -161,13 +171,17 @@ class OutputSource(VoidPtrSource):
     def local_variable_name(self):
         return f"output_{self.array_idx}_ptr"
 
+    def uses_numba_output_type(self) -> bool:
+        from numba_cfunc_compiler.defaults.struct_support import StructType
+
+        return isinstance(self.type, PrimitiveType) or (isinstance(self.type, StructType) and self.type.typed_view)
+
     def write(self, value: Any, value_type: VariableType | None = None):
         """
-        Create: output_(output_idx)_ptr[0] = value
+        Write a value to the host-owned output cell.
 
-        Struct outputs are opaque pointers rather than scalar values.  Copy
-        their bytes into the host-owned output buffer instead of attempting to
-        subscript and assign through a void pointer.
+        Primitive outputs use a Numba-typed store. Typed structs use a
+        layout-checked copy; legacy structs retain their raw byte copy.
         """
         from numba_cfunc_compiler.defaults.struct_support import StructType
 
@@ -205,19 +219,14 @@ class OutputSource(VoidPtrSource):
             return ast.Expr(value=copy_call)
 
         if isinstance(self.type, PrimitiveType):
-            python_value_type = getattr(value_type, "value", None)
-            if python_value_type is None and isinstance(value, ast.Constant):
-                python_value_type = type(value.value)
-            elif python_value_type is None and isinstance(value, ast.Name):
-                var = self.variable_factory.from_name(value.id)
-                if var is not None:
-                    python_value_type = var.type.value
-            if (
-                python_value_type is not None
-                and not isinstance(python_value_type, UnknownNumbaType)
-                and not self.type.accepts_value_type(python_value_type)
-            ):
-                raise TypeError(f"Return value at position {self.array_idx} has type {python_value_type}, expected {self.type.value}")
+            return ast.Expr(
+                value=AST.function_call(
+                    "primitive_output_store",
+                    ast.Name(id=self.local_variable_name(), ctx=ast.Load()),
+                    value,
+                    ast.Constant(value=self.type.value.__name__),
+                )
+            )
         output_ptr_value = AST.deref_pointer(self.local_variable_name())
         return AST.assignment(output_ptr_value, value)
 

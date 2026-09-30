@@ -248,18 +248,26 @@ class NumbaTypeInference:
 
         # 5. Generate assignment for resolved source variable
         is_keyed_container = self._is_keyed_container(src_var)
-        src_value = src_var if is_keyed_container else src_var.get()
+        src_value = src_var if is_keyed_container else src_var.read_value()
 
         existing_var = self.variable_factory.from_name(target_name)
         if existing_var is not None:
             # Assigning to existing variable
             return AST.assignment(existing_var.get(), src_value)
 
+        from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
         from numba_cfunc_compiler.defaults.struct_support import StructType
 
+        native_primitive = isinstance(src_var.type, PrimitiveType) and not getattr(src_var, "_has_ast_methods", False)
+        if native_primitive:
+            # This is a value copy even when a host adapter marks its source
+            # pointer opaque. Retain local metadata for legacy AST handlers.
+            self.variable_factory.add_variable(LocalVariableSource(src_var.type, target_name))
+            return AST.assignment(target_name, src_value)
+
         if isinstance(src_var.type, StructType) and src_var.type.typed_view:
-            # A local alias is an ordinary Numba variable. Keeping it in the
-            # source map would make later uses resolve back to the old source.
+            # Numba owns typed-struct locals; a source alias would incorrectly
+            # resolve later uses back to the original pointer.
             return AST.assignment(target_name, src_value)
 
         # Creating new variable

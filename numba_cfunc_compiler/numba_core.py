@@ -35,6 +35,7 @@ from numba_cfunc_compiler.standalone.list import (
     standalone_list_new,
     standalone_list_to_voidptr,
 )
+from numba_cfunc_compiler.standalone.primitive import OUTPUT_STORE_VERSION, primitive_output_store
 from numba_cfunc_compiler.standalone.struct import LOWERING_VERSION
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.enum import make_enum
@@ -89,6 +90,7 @@ def _build_semantic_key(
     cfunc_sig: str,
     cfunc_kwargs: str,
     typed_struct_layouts: dict | None = None,
+    uses_primitive_output_store: bool = False,
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
@@ -100,6 +102,8 @@ def _build_semantic_key(
             "lowering_version": LOWERING_VERSION,
             "layouts": [layout.key for _, layout in sorted(typed_struct_layouts.items())],
         }
+    if uses_primitive_output_store:
+        payload["primitive_output_store_version"] = OUTPUT_STORE_VERSION
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -246,7 +250,17 @@ def create_compiled_func(
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
-    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs, variable_factory.typed_struct_layouts)
+    from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
+    from numba_cfunc_compiler.variable_factory import OutputSource
+
+    uses_primitive_output_store = any(isinstance(output.type, PrimitiveType) for output in variable_factory.get_source(OutputSource))
+    semantic_key = _build_semantic_key(
+        new_func_code,
+        cfunc_sig,
+        cfunc_kwargs,
+        variable_factory.typed_struct_layouts,
+        uses_primitive_output_store,
+    )
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
 {new_func_code}
@@ -270,6 +284,7 @@ def create_compiled_func(
             "struct_field_ptr": StructHelper.struct_field_ptr,
             "struct_field_store": StructHelper.struct_field_store,
             "struct_memcpy": StructHelper.struct_memcpy,
+            "primitive_output_store": primitive_output_store,
             "voidptr_null": AST.voidptr_null,
             "ffi_tuple_args": AST.ffi_tuple_args,
             "cast_voidptr_to_int": AST.cast_voidptr_to_int,

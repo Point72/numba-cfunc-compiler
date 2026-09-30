@@ -191,7 +191,7 @@ class NumbaASTConverter(ast.NodeTransformer):
             if (isinstance(elt, ast.Name) and elt.id == "None") or (isinstance(elt, ast.Constant) and elt.value is None):
                 continue
 
-            if isinstance(output_var.type, StructType) and output_var.type.typed_view:
+            if output_var.uses_numba_output_type():
                 value = self.variable_factory.lower_value_expression(self, elt, statements)
                 statements.append(output_var.write(value))
                 statements.append(output_var.call("output", None))
@@ -320,7 +320,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         var = self.variable_factory.from_name(node.id)
         # Let managed variables decide how to represent themselves
         if var is not None:
-            return var.get()
+            return var.read_value() if isinstance(node.ctx, ast.Load) else var.get()
         return node
 
     def visit_AnnAssign(self, node):

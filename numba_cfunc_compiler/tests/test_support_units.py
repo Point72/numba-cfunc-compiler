@@ -24,6 +24,7 @@ from numba_cfunc_compiler.defaults.struct_support import (
     struct_attribute_transformer,
 )
 from numba_cfunc_compiler.defaults.timedelta_support import TimeDeltaType
+from numba_cfunc_compiler.method_factory import Output
 from numba_cfunc_compiler.models import (
     CONTAINER_STATE_INIT,
     DictTypeMarker,
@@ -605,7 +606,7 @@ def test_ast_utilities():
         output = OutputSource(0, TypeFactory.get_type(int), "result")
         factory.add_variable(output)
         lowered = AST.set_output(factory, SimpleNamespace(visit=lambda n: n), ast.Constant("result"), ast.Constant(5))
-        assert [unparse(stmt) for stmt in lowered] == ["output_0_ptr[0] = 5", "output_ticked[0] = 1"]
+        assert [unparse(stmt) for stmt in lowered] == ["primitive_output_store(output_0_ptr, 5, 'int')", "output_ticked[0] = 1"]
         with pytest.raises(TypeError, match="string constant"):
             AST.set_output(factory, None, ast.Name(id="result", ctx=ast.Load()), ast.Constant(5))
         with pytest.raises(KeyError, match="unknown output"):
@@ -631,6 +632,8 @@ def test_variable_sources():
         void_source = VoidPtrSource(0, int_type, "x", "inputs")
         assert unparse(void_source.read()) == "x = cast_voidptr_to_ptr(inputs[0], 'int64')"
         assert unparse(void_source.get()) == "x[0]"
+        bool_source = VoidPtrSource(1, TypeFactory.get_type(bool), "flag", "inputs")
+        assert unparse(bool_source.read_value()) == "flag[0] != 0"
         forced = VoidPtrSource(1, int_type, "opaque", "inputs", force_opaque=True)
         assert forced.is_opaque_pointer()
         assert unparse(forced.get()) == "opaque[0]"
@@ -638,14 +641,11 @@ def test_variable_sources():
 
         output = OutputSource(0, int_type, "result")
         assert output.local_variable_name() == "output_0_ptr"
-        assert unparse(output.write(ast.Constant(3))) == "output_0_ptr[0] = 3"
-        with pytest.raises(TypeError, match="Return value"):
-            output.write(ast.Constant(3.14))
+        assert unparse(output.write(ast.Constant(3))) == "primitive_output_store(output_0_ptr, 3, 'int')"
         output_factory = VariableFactory()
         output_factory.add_variable(output)
         output_factory.add_variable(LocalVariableSource(TypeFactory.get_type(float), "local_float"))
-        with pytest.raises(TypeError, match="Return value"):
-            output.write(ast.Name(id="local_float", ctx=ast.Load()))
+        assert unparse(output.write(ast.Name(id="local_float", ctx=ast.Load()))) == "primitive_output_store(output_0_ptr, local_float, 'int')"
 
         local = LocalVariableSource(int_type, "local")
         assert unparse(local.get()) == "local"
@@ -886,6 +886,12 @@ def test_type_inference():
         simple = inference.create_assignment_variable(parse_stmt("z = x"), ast.Name(id="x", ctx=ast.Load()))
         assert unparse(simple) == "z = x"
         assert factory.from_name("z").type is int_type
+
+        method_source = VoidPtrSource(0, int_type, "method_source", "inputs", supported_methods=[Output], force_opaque=True)
+        factory.add_variable(method_source)
+        method_alias = inference.create_assignment_variable(parse_stmt("method_alias = method_source"), ast.Name(id="method_source", ctx=ast.Load()))
+        assert unparse(method_alias) == "method_alias = method_source[0]"
+        assert factory.from_name("method_alias") is method_source
 
         opaque = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "opaque")
         factory.add_variable(opaque)
