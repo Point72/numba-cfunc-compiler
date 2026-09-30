@@ -1,6 +1,6 @@
 # numba cfunc compiler
 
-Extensible compiler for producing native C-callable functions from Python source with stateful variables, typed containers, and pluggable type systems built on Numba @cfunc
+Extensible compiler for producing native C-callable functions from Python source with stateful variables and Numba typed containers and structs.
 
 [![Build Status](https://github.com/Point72/numba-cfunc-compiler/actions/workflows/build.yaml/badge.svg?branch=main&event=push)](https://github.com/Point72/numba-cfunc-compiler/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/gh/Point72/numba-cfunc-compiler/branch/main/graph/badge.svg)](https://codecov.io/gh/Point72/numba-cfunc-compiler)
@@ -13,8 +13,8 @@ A compilation framework that transforms Python functions into native C-callable 
 
 - **Stateful variables** — declare persistent state with natural syntax that survives across calls with automatic lifecycle management (start/execute/stop)
 - **Standalone typed containers** — lists and dicts that work inside compiled functions without Numba's runtime overhead
-- **Extensible type resolution** — register custom types that map Python syntax to numba-compatible lowering
-- **Plugin architecture** — all domain-specific behavior (input handlers, output handlers, AST transforms, type inference) is injected through registration APIs
+- **Host storage descriptors** — register types that describe annotations and host memory layout
+- **Plugin architecture** — domain behavior is registered through input, output, source, AST, and Numba extension APIs
 
 The distribution is published as `numba-cfunc-compiler` and imported in Python as `numba_cfunc_compiler`.
 
@@ -82,7 +82,7 @@ Every extension point follows the same pattern: define a handler, register it in
 
 ### Registering Custom Types
 
-Subclass `VariableType` to teach the system about a new type. The factory tries registered classes in order — first match wins.
+Subclass `VariableType` to describe a host annotation and its storage. The factory tries registered classes in order — first match wins. Numba owns the types of user locals, aliases, and expressions.
 
 ```python
 from numba_cfunc_compiler.type_factory import TypeFactory
@@ -233,37 +233,11 @@ Supported node types: `Call`, `Expr`, `Return`, `Assign`, `AugAssign`, `Subscrip
 
 Priority: lower values run first. Pre-handlers short-circuit (first non-`None` wins). Post-handlers chain.
 
-### Registering Type Inference Handlers
+### Extending Value Behavior
 
-Type inference resolves method call chains (`a.method().field`) during AST transformation.
+Use Numba extension types and `@overload_method` for value attributes and methods. The built-in struct view, list, and dict types follow this approach. The AST converter handles host storage access and source-specific methods that require source indices or runtime context. For special syntax such as an enum constant, register an AST handler with `@ast_handler('Attribute', pre=True)`.
 
-```python
-from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
-from numba_cfunc_compiler.variable_factory import ExpressionSource
-
-# Handle attribute access:  my_var.some_attr
-def my_attr_handler(inference, base_var, attr_name, args):
-    if isinstance(base_var.type, MyCustomType):
-        field_ast = generate_access(base_var, attr_name)
-        return ExpressionSource(resolve_type(attr_name), field_ast, inference.variable_factory)
-    return None
-
-NumbaTypeInference.register_attr_accessor(my_attr_handler)
-
-# Handle method calls:  my_var.transform(x)
-def my_call_handler(inference, base_var, method_name, args):
-    if isinstance(base_var.type, MyCustomType) and method_name == 'transform':
-        ...
-    return None
-
-NumbaTypeInference.register_call_handler(my_call_handler)
-
-# Handle attribute nodes:  MyEnum.VALUE → constant
-def my_attribute_transformer(node, globalns, variable_factory):
-    ...  # return transformed AST or None
-
-NumbaTypeInference.register_attr_lowerer(my_attribute_transformer)
-```
+Struct fields with numeric Numba types become typed fields automatically. Pointer-valued fields are excluded from direct field access until they have a typed representation.
 
 ### Registering Signal Processors
 
@@ -289,8 +263,6 @@ def register():
     """Register into the current CompilationContext."""
     TypeFactory.register(MyType)
     FunctionAnalyzer.register_input_handler(MyInputHandler())
-    NumbaTypeInference.register_attr_accessor(my_attr_handler)
-
     @ast_handler('Call', pre=True)
     def handle_my_call(converter, node):
         ...
@@ -376,7 +348,7 @@ Python Function
 
 ### CompilationContext
 
-All mutable state lives on a `CompilationContext` instance (backed by `contextvars.ContextVar`). This replaced class-level mutable dicts/lists on `TypeFactory`, `ASTHandlerRegistry`, `NumbaTypeInference`, `FunctionAnalyzer`, `FFIMethodHelper`, and `NumbaFunctionInfo`. Benefits: test isolation, concurrent safety, explicit initialization.
+All mutable registration state lives on a `CompilationContext` instance (backed by `contextvars.ContextVar`). This includes `TypeFactory`, `ASTHandlerRegistry`, `FunctionAnalyzer`, `FFIMethodHelper`, and `NumbaFunctionInfo` state.
 
 ### Variable Sources
 
@@ -385,9 +357,8 @@ The `VariableSource` hierarchy abstracts where a variable lives. The AST convert
 - `VoidPtrSource` — reads from an external `void*` array such as `inputs` or `state`
 - `ConstantSource` — materializes compile-time constants, including container constants
 - `OutputSource` — writes to `outputs[i]` and marks `output_ticked[i] = 1`
-- `LocalVariableSource` — tracks locals introduced during AST rewriting
-- `ExpressionSource` — carries type information for expression-backed values
-- `LocalConstantSource` — represents local constant values created during lowering
+- `LocalVariableSource` — explicit source wrapper for a local value used by an FFI method
+- `ExpressionSource` — host source represented by a keyed access expression
 
 Signal-style inputs are typically modeled by custom source categories that create `VoidPtrSource` instances with framework-specific metadata.
 
@@ -397,9 +368,9 @@ Signal-style inputs are typically modeled by custom source categories that creat
 
 - `visit_FunctionDef` — replaces args with the fixed cfunc parameter list, injects lifecycle dispatch
 - `visit_Return` — converts `return value` to output pointer writes + tick marks
-- `visit_Assign` — handles struct fields, managed variables, type-lowered assignments
-- `visit_Name` — resolves managed variable names to their AST representation
-- `visit_Call` — dispatches method calls through the type inference engine
+- `visit_Assign` — handles declared source stores and syntax-specific constructors
+- `visit_Name` — reads declared host sources; local names pass through to Numba
+- `visit_Call` — lowers source-specific methods; value methods pass through to Numba
 
 ### Lifecycle Dispatch
 

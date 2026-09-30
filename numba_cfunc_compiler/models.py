@@ -205,14 +205,14 @@ class VariableType(ABC):
         return None
 
     @classmethod
-    def try_lower_assignment(cls, node: "ast.Assign", rhs: "ast.AST", call_globals: dict) -> tuple[list, "VariableType"] | None:
+    def try_lower_assignment(cls, node: "ast.Assign", rhs: "ast.AST", call_globals: dict) -> list[ast.stmt] | None:
         """
         Try to lower/transform an assignment AST node.
 
         Used for special assignments like `x = datetime(2020, 1, 1)` that need
         to be transformed (e.g., to nanoseconds).
 
-        Returns (replacement_statements, variable_type) or None if not handled.
+        Returns replacement statements or None if not handled.
         """
         return None
 

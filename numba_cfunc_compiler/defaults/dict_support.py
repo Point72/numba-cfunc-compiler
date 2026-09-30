@@ -25,16 +25,6 @@ class NumbaDictType(ContainerType):
     def get_numba_type_name(self) -> str:
         return "voidptr"
 
-    def get_methods(self):
-        from numba_cfunc_compiler.method_factory import NativeMethod
-
-        return [
-            NativeMethod("get"),
-            NativeMethod("pop"),
-            NativeMethod("clear"),
-            NativeMethod("contains"),
-        ]
-
     def _to_voidptr_func_name(self) -> str:
         return "standalone_dict_to_voidptr"
 
@@ -128,7 +118,7 @@ class NumbaDictType(ContainerType):
         return var_type.create_new_container(var_name), var_type
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, "NumbaDictType"] | None:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
         """Lower: d = create_new_dict(int, float) → standalone dict initialization"""
         if not isinstance(rhs, ast.Call):
             return None
@@ -155,8 +145,8 @@ class NumbaDictType(ContainerType):
         key_type_name = get_type_name(key_type_node)
         val_type_name = get_type_name(val_type_node)
 
-        stmts, var_type = cls.create_local_from_type_names(var_name, key_type_name, val_type_name)
-        return stmts, var_type
+        stmts, _ = cls.create_local_from_type_names(var_name, key_type_name, val_type_name)
+        return stmts
 
     @classmethod
     def _is_create_new_dict_call(cls, value_node: ast.AST) -> bool:
@@ -237,156 +227,6 @@ class NumbaDictType(ContainerType):
         return dict(value)
 
 
-_dict_for_counter = 0
-
-
-def _get_dict_var_from_for(converter, node):
-    """
-    Check if a For loop iterates over a NumbaDictType variable.
-
-    Returns (var, mode) where mode is "items", "keys", or None.
-    Supports:
-        for k, v in d.items()
-        for k in d.keys()
-        for k in d
-    """
-    it = node.iter
-
-    if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute):
-        if it.func.attr in ("items", "keys") and isinstance(it.func.value, ast.Name):
-            var = converter.variable_factory.from_name(it.func.value.id)
-            if var is not None and isinstance(var.type, NumbaDictType):
-                return var, it.func.attr
-    elif isinstance(it, ast.Name):
-        var = converter.variable_factory.from_name(it.id)
-        if var is not None and isinstance(var.type, NumbaDictType):
-            return var, "keys"
-
-    return None, None
-
-
-def handle_dict_for(converter, node):
-    """
-    Rewrite ``for`` loops over NumbaDictType at the AST level.
-
-    Transforms:
-        for k, v in d.items():     for k in d:
-            body                       body
-
-    Into:
-        _ds0 = _standalone_dict_iter_begin(d)
-        for _di0 in range(standalone_dict_length(d)):
-            k, v = _standalone_dict_iter_next_item(_ds0, d)
-            body
-    """
-    var, mode = _get_dict_var_from_for(converter, node)
-    if var is None:
-        return None
-
-    global _dict_for_counter
-    uid = _dict_for_counter
-    _dict_for_counter += 1
-
-    dict_ref = var.get()
-    state_name = f"_ds{uid}"
-    index_name = f"_di{uid}"
-
-    init_stmt = AST.assignment(
-        state_name,
-        AST.function_call("_standalone_dict_iter_begin", dict_ref),
-    )
-
-    if mode == "items":
-        next_call = AST.function_call(
-            "_standalone_dict_iter_next_item",
-            ast.Name(id=state_name, ctx=ast.Load()),
-            dict_ref,
-        )
-    else:
-        next_call = AST.function_call(
-            "_standalone_dict_iter_next_key",
-            ast.Name(id=state_name, ctx=ast.Load()),
-            dict_ref,
-        )
-
-    next_assign = ast.Assign(targets=[node.target], value=next_call)
-
-    visited_body = []
-    for stmt in node.body:
-        result = converter.visit(stmt)
-        if isinstance(result, list):
-            visited_body.extend(result)
-        elif result is not None:
-            visited_body.append(result)
-
-    new_for = ast.For(
-        target=ast.Name(id=index_name, ctx=ast.Store()),
-        iter=ast.Call(
-            func=ast.Name(id="range", ctx=ast.Load()),
-            args=[AST.function_call("standalone_dict_length", dict_ref)],
-            keywords=[],
-        ),
-        body=[next_assign] + visited_body,
-        orelse=[],
-    )
-    ast.fix_missing_locations(init_stmt)
-    ast.fix_missing_locations(new_for)
-
-    from numba_cfunc_compiler.ast_handlers import HandlerResult
-
-    return HandlerResult(node=new_for, side_effects=[init_stmt])
-
-
-def handle_dict_contains(converter, node):
-    """
-    Handle 'key in dict' and 'key not in dict' for NumbaDict.
-
-    Transforms:
-        key in dict     -> dict.contains(key)
-        key not in dict -> not dict.contains(key)
-    """
-    if len(node.ops) != 1 or not isinstance(node.ops[0], (ast.In, ast.NotIn)):
-        return None
-
-    is_not_in = isinstance(node.ops[0], ast.NotIn)
-    container = node.comparators[0]
-    key = node.left
-
-    # Check if container is a dict state variable
-    if not isinstance(container, ast.Name):
-        return None
-
-    var = converter.variable_factory.from_name(container.id)
-    if var is None or not isinstance(var.type, NumbaDictType):
-        return None
-
-    # Transform the key if it's a managed variable
-    if isinstance(key, ast.Name):
-        key_var = converter.variable_factory.from_name(key.id)
-        if key_var is not None:
-            key = key_var.get()
-
-    # Build dict.contains(key) call
-    contains_call = ast.Call(
-        func=ast.Attribute(
-            value=var.get(),
-            attr="contains",
-            ctx=ast.Load(),
-        ),
-        args=[key],
-        keywords=[],
-    )
-
-    # Wrap in 'not' for 'not in'
-    if is_not_in:
-        return ast.UnaryOp(op=ast.Not(), operand=contains_call)
-    return contains_call
-
-
 def register():
-    """Register NumbaDict type support."""
-    from numba_cfunc_compiler.ast_handlers import ASTHandlerRegistry, HandlerPhase
-
+    """Register standalone dict host storage support."""
     TypeFactory.register(NumbaDictType)
-    ASTHandlerRegistry.register("Compare", handle_dict_contains, HandlerPhase.PRE)
-    ASTHandlerRegistry.register("For", handle_dict_for, HandlerPhase.PRE)

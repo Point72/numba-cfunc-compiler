@@ -25,11 +25,6 @@ class NumbaListType(ContainerType):
     def get_numba_type_name(self) -> str:
         return "voidptr"
 
-    def get_methods(self):
-        from numba_cfunc_compiler.method_factory import NativeMethod
-
-        return [NativeMethod("append"), NativeMethod("pop"), NativeMethod("clear")]
-
     def _to_voidptr_func_name(self) -> str:
         return "standalone_list_to_voidptr"
 
@@ -112,7 +107,7 @@ class NumbaListType(ContainerType):
         return var_type.create_new_container(var_name), var_type
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, "NumbaListType"] | None:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
         """Lower: l = create_new_list(int) → standalone list initialization"""
         if not isinstance(rhs, ast.Call):
             return None
@@ -134,8 +129,8 @@ class NumbaListType(ContainerType):
         else:
             raise TypeError(f"Unsupported List element type: {ast.dump(elem_type_node)}")
 
-        stmts, var_type = cls.create_local_from_type_name(var_name, elem_type_name)
-        return stmts, var_type
+        stmts, _ = cls.create_local_from_type_name(var_name, elem_type_name)
+        return stmts
 
     @classmethod
     def _is_create_new_list_call(cls, value_node: ast.AST) -> bool:
@@ -200,79 +195,6 @@ class NumbaListType(ContainerType):
         return list(value)
 
 
-_list_for_counter = 0
-
-
-def handle_list_for(converter, node):
-    """
-    Rewrite ``for`` loops over NumbaListType at the AST level.
-
-    Transforms:
-        for x in lst:
-            body
-
-    Into:
-        for _li0 in range(len(lst)):
-            x = lst[_li0]
-            body
-    """
-    it = node.iter
-    if not isinstance(it, ast.Name):
-        return None
-
-    var = converter.variable_factory.from_name(it.id)
-    if var is None or not isinstance(var.type, NumbaListType):
-        return None
-
-    global _list_for_counter
-    uid = _list_for_counter
-    _list_for_counter += 1
-
-    list_ref = var.get()
-    index_name = f"_li{uid}"
-
-    index_node = ast.Name(id=index_name, ctx=ast.Load())
-    elem_assign = ast.Assign(
-        targets=[node.target],
-        value=ast.Subscript(
-            value=list_ref,
-            slice=index_node,
-            ctx=ast.Load(),
-        ),
-    )
-
-    visited_body = []
-    for stmt in node.body:
-        result = converter.visit(stmt)
-        if isinstance(result, list):
-            visited_body.extend(result)
-        elif result is not None:
-            visited_body.append(result)
-
-    new_for = ast.For(
-        target=ast.Name(id=index_name, ctx=ast.Store()),
-        iter=ast.Call(
-            func=ast.Name(id="range", ctx=ast.Load()),
-            args=[
-                ast.Call(
-                    func=ast.Name(id="len", ctx=ast.Load()),
-                    args=[list_ref],
-                    keywords=[],
-                )
-            ],
-            keywords=[],
-        ),
-        body=[elem_assign] + visited_body,
-        orelse=[],
-    )
-    ast.fix_missing_locations(new_for)
-
-    return new_for
-
-
 def register():
-    """Register NumbaList type support."""
-    from numba_cfunc_compiler.ast_handlers import ASTHandlerRegistry, HandlerPhase
-
+    """Register standalone list host storage support."""
     TypeFactory.register(NumbaListType)
-    ASTHandlerRegistry.register("For", handle_list_for, HandlerPhase.PRE)

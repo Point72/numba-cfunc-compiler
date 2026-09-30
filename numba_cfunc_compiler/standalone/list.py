@@ -16,9 +16,10 @@ Memory is managed via state slots, with allocation on first use.
 import operator
 
 from llvmlite import ir
-from numba.core import types
+from numba.core import cgutils, types
 from numba.core.datamodel import models
-from numba.extending import intrinsic, overload, overload_method, register_model
+from numba.core.imputils import RefType, impl_ret_borrowed, iternext_impl
+from numba.extending import intrinsic, lower_builtin, overload, overload_method, register_model
 
 from numba_cfunc_compiler.standalone.utils import (
     convert_to_i8,
@@ -33,7 +34,7 @@ from numba_cfunc_compiler.type_registry import NumbaTypeRegistry
 
 
 # Typing for StandaloneListType
-class StandaloneListType(types.Type):
+class StandaloneListType(types.IterableType):
     """
     Custom Numba type for NRT-free lists backed by NB_List*.
 
@@ -57,6 +58,20 @@ class StandaloneListType(types.Type):
     def key(self):
         return self.dtype
 
+    @property
+    def iterator_type(self):
+        return StandaloneListIteratorType(self)
+
+
+class StandaloneListIteratorType(types.SimpleIteratorType):
+    def __init__(self, parent):
+        self.parent = parent
+        super().__init__(f"iter[{parent}]", parent.dtype)
+
+    @property
+    def key(self):
+        return self.parent
+
 
 # LLVM Data Model
 @register_model(StandaloneListType)
@@ -69,6 +84,37 @@ class StandaloneListModel(models.PrimitiveModel):
     def __init__(self, dmm, fe_type):
         be_type = i8ptr()  # i8* (voidptr)
         super().__init__(dmm, fe_type, be_type)
+
+
+@register_model(StandaloneListIteratorType)
+class StandaloneListIteratorModel(models.StructModel):
+    def __init__(self, dmm, fe_type):
+        super().__init__(dmm, fe_type, [("parent", fe_type.parent), ("index", types.EphemeralPointer(types.intp))])
+
+
+@lower_builtin("getiter", StandaloneListType)
+def lower_list_getiter(context, builder, sig, args):
+    iterator = context.make_helper(builder, sig.return_type)
+    iterator.parent = args[0]
+    index_ptr = cgutils.alloca_once(builder, i64())
+    builder.store(ir.Constant(i64(), 0), index_ptr)
+    iterator.index = index_ptr
+    return impl_ret_borrowed(context, builder, sig.return_type, iterator._getvalue())
+
+
+@lower_builtin("iternext", StandaloneListIteratorType)
+@iternext_impl(RefType.BORROWED)
+def lower_list_iternext(context, builder, sig, args, result):
+    iterator = context.make_helper(builder, sig.args[0], args[0])
+    index = builder.load(iterator.index)
+    length_fn = get_or_declare_function(builder.module, "numba_list_length", ir.FunctionType(i64(), [i8ptr()]))
+    length = builder.call(length_fn, [iterator.parent])
+    valid = builder.icmp_signed("<", index, length)
+    result.set_valid(valid)
+    with builder.if_then(valid):
+        item = _make_getitem_codegen(sig.args[0].parent.dtype)(context, builder, sig, [iterator.parent, index])
+        result.yield_(item)
+        builder.store(builder.add(index, ir.Constant(i64(), 1)), iterator.index)
 
 
 # Intrinsics

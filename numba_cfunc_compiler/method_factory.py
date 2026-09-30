@@ -7,7 +7,6 @@ from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
 
 __all__ = [
     "MethodBase",
-    "NativeMethod",
     "Output",
     "ffi_method_factory",
     "method_handler_factory",
@@ -39,46 +38,6 @@ class MethodBase(ABC):
         that have it registered in their supported_methods.
         """
         raise NotImplementedError
-
-
-def NativeMethod(method_name: str) -> type:
-    """
-    Create a method class that passes through to Numba's native method handling.
-    """
-
-    def handle(var, args):
-        from numba_cfunc_compiler.variable_factory import VariableSource
-
-        if not isinstance(var, VariableSource):
-            raise TypeError(f"called {method_name} on {var.name} which is not a tracked variable")
-        variable_factory = var.variable_factory
-        ast_converter = variable_factory.ast_converter
-
-        if ast_converter is not None and args:
-            transformed_args = [ast_converter.visit(arg) for arg in args]
-        else:
-            transformed_args = list(args) if args else []
-
-        # Return a method call AST that Numba will handle natively
-        return ast.Call(
-            func=ast.Attribute(
-                value=var.get(),
-                attr=method_name,
-                ctx=ast.Load(),
-            ),
-            args=transformed_args,
-            keywords=[],
-        )
-
-    cls_name = f"NativeMethod_{method_name}"
-    return type(
-        cls_name,
-        (MethodBase,),
-        {
-            "get_name": classmethod(lambda cls: method_name),
-            "handle": staticmethod(handle),
-        },
-    )
 
 
 class Output(MethodBase):

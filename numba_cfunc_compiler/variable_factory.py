@@ -1,5 +1,4 @@
 import ast
-import copy
 from collections import defaultdict
 from typing import Any
 
@@ -7,17 +6,13 @@ from numba_cfunc_compiler.compiler_constants import OUTPUTS_ARRAY_NAME
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.models import (
     ContainerType,
-    UnknownNumbaType,
-    UnknownType,
     VariableType,
 )
-from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST
 
 __all__ = [
     "ConstantSource",
     "ExpressionSource",
-    "LocalConstantSource",
     "LocalVariableSource",
     "OutputSource",
     "VariableFactory",
@@ -52,7 +47,6 @@ class VariableSource:
         self.category: Any = None  # Set by VariableFactory.add_variable
         supported_methods = supported_methods or []
         supported_methods = supported_methods + type.get_methods()
-        self._has_ast_methods = bool(supported_methods)
         self.handler = method_handler_factory(self.__class__.__name__, supported_methods)
 
     def local_variable_name(self):
@@ -80,11 +74,6 @@ class VariableSource:
         if self.type is not None:
             return self.type.is_opaque_pointer()
         return False
-
-    def clone_with_name(self, new_name: str):
-        new_source = copy.copy(self)
-        new_source.name = new_name
-        return new_source
 
 
 class VoidPtrSource(VariableSource):
@@ -136,7 +125,7 @@ class VoidPtrSource(VariableSource):
         self.type = self.type.prepare_voidptr_read(self)
         from numba_cfunc_compiler.defaults.struct_support import StructType
 
-        if isinstance(self.type, StructType) and self.type.typed_view and not isinstance(self, OutputSource):
+        if isinstance(self.type, StructType) and not isinstance(self, OutputSource):
             view_name = self.variable_factory.bind_struct_view(self.type)
             return AST.assignment(self.local_variable_name(), AST.function_call(view_name, loaded_value))
         value = AST.cast_from_voidptr(loaded_value, self.type.get_numba_type_name())
@@ -171,51 +160,21 @@ class OutputSource(VoidPtrSource):
     def local_variable_name(self):
         return f"output_{self.array_idx}_ptr"
 
-    def uses_numba_output_type(self) -> bool:
-        from numba_cfunc_compiler.defaults.struct_support import StructType
-
-        return isinstance(self.type, PrimitiveType) or (isinstance(self.type, StructType) and self.type.typed_view)
-
-    def write(self, value: Any, value_type: VariableType | None = None):
+    def write(self, value: Any):
         """
         Write a value to the host-owned output cell.
 
-        Primitive outputs use a Numba-typed store. Typed structs use a
-        layout-checked copy; legacy structs retain their raw byte copy.
+        Primitive outputs use a Numba-typed store. Structs use a
+        layout-checked copy.
         """
         from numba_cfunc_compiler.defaults.struct_support import StructType
 
         if isinstance(self.type, StructType):
-            if self.type.typed_view:
-                # The layout-bound intrinsic checks the expression's Numba type.
-                # An AST-inferred value_type may be unknown for helper calls,
-                # conditional expressions, and other valid struct values.
-                output_size = self.type.get_size()
-                if output_size <= 0:
-                    raise TypeError(f"Struct output {self.type.value} has invalid size {output_size}")
-                copy_name = self.variable_factory.bind_struct_copy(self.type)
-                copy_call = AST.function_call(copy_name, ast.Name(id=self.local_variable_name(), ctx=ast.Load()), value)
-                return ast.Expr(value=copy_call)
-
-            if not isinstance(value_type, StructType):
-                actual_type = getattr(value_type, "value", value_type)
-                raise TypeError(f"Return value at position {self.array_idx} has type {actual_type}, expected struct {self.type.value}")
-            if value_type.value is not self.type.value:
-                raise TypeError(f"Return value at position {self.array_idx} has struct type {value_type.value}, expected {self.type.value}")
-
             output_size = self.type.get_size()
-            value_size = value_type.get_size()
             if output_size <= 0:
                 raise TypeError(f"Struct output {self.type.value} has invalid size {output_size}")
-            if value_size != output_size:
-                raise TypeError(f"Return value at position {self.array_idx} has struct size {value_size}, expected {output_size}")
-
-            copy_call = AST.function_call(
-                "struct_memcpy",
-                ast.Name(id=self.local_variable_name(), ctx=ast.Load()),
-                value,
-                ast.Constant(value=output_size),
-            )
+            copy_name = self.variable_factory.bind_struct_copy(self.type)
+            copy_call = AST.function_call(copy_name, ast.Name(id=self.local_variable_name(), ctx=ast.Load()), value)
             return ast.Expr(value=copy_call)
 
         if isinstance(self.type, PrimitiveType):
@@ -243,7 +202,7 @@ class LocalVariableSource(VariableSource):
 
 
 class ExpressionSource(VariableSource):
-    """Variable backed by an AST expression, used to keep track of type information."""
+    """Host source whose value is produced by a keyed access expression."""
 
     def __init__(self, type: VariableType, expr: ast.AST, variable_factory, name: str = "_expr"):
         super().__init__(type, name, variable_factory=variable_factory)
@@ -255,22 +214,6 @@ class ExpressionSource(VariableSource):
 
     def get(self):
         return self.expr
-
-
-class LocalConstantSource(VariableSource):
-    """Local constants created inside the node (mainly used when returning a constant value)"""
-
-    def __init__(self, type: VariableType, name: str, var_value: Any):
-        super().__init__(type, name)
-        self.var_value = var_value
-
-    def local_variable_name(self):
-        return self.name
-
-    def get(self):
-        if isinstance(self.type, PrimitiveType):
-            return ast.Constant(value=self.var_value)
-        raise ValueError(f"LocalConstantSource cannot be used for type {self.type}")
 
 
 class ConstantSource(VariableSource):
@@ -307,8 +250,7 @@ class VariableFactory:
     def __init__(self):
         self.variable_sources = defaultdict(list)
         self.category_variables = defaultdict(list)
-        self.variable_name_map = {}
-        self.temporary_variable_counter = 0
+        self.source_name_map = {}
         self.ast_converter = None
         self.typed_struct_bindings = {}
         self.typed_struct_layouts = {}
@@ -329,14 +271,14 @@ class VariableFactory:
         return self._bind_struct(struct_type, "copy")
 
     def add_variable(self, variable: VariableSource, category: Any = None):
-        if variable.name in self.variable_name_map:
+        if variable.name in self.source_name_map:
             raise ValueError(f"variable {variable.name} already exists")
         variable.variable_factory = self
         self.variable_sources[type(variable)].append(variable)
         if category is not None:
             variable.category = category
             self.category_variables[category].append(variable)
-        self.variable_name_map[variable.name] = variable
+        self.source_name_map[variable.name] = variable
 
     def get_source(self, source_type: type):
         if not issubclass(source_type, VariableSource):
@@ -347,10 +289,9 @@ class VariableFactory:
         """Get all variables registered under *category_id*."""
         return self.category_variables.get(category_id, [])
 
-    def from_name(self, name: str):
-        if name not in self.variable_name_map:
-            return None
-        return self.variable_name_map[name]
+    def from_source_name(self, name: str):
+        """Look up a declared host source."""
+        return self.source_name_map.get(name)
 
     def get_output_by_idx(self, idx: int):
         output = self.variable_sources[OutputSource][idx]
@@ -358,51 +299,15 @@ class VariableFactory:
             raise RuntimeError(f"output {output.name} has array index {output.array_idx} but expected {idx}")
         return output
 
-    def create_temporary_variable_name(self):
-        name = f"tmp_{self.temporary_variable_counter}"
-        self.temporary_variable_counter += 1
-        return name
-
-    def add_local_variable(self, type, var_name: str, value):
-        # If caller provides a VariableType instance use it directly; otherwise derive it
-        var_type = type if isinstance(type, VariableType) else TypeFactory.get_type(type)
-        var = LocalVariableSource(var_type, var_name)
-        self.add_variable(var)
-        assign = AST.assignment(var_name, value)
-        return var, assign
-
-    def create_temporary_variable(self, type, value, statements: list[ast.stmt]):
-        name = self.create_temporary_variable_name()
-        var, assign = self.add_local_variable(type, name, value)
-        statements.append(assign)
-        return var
-
-    def _visit_and_create_temp_var(self, visitor, ast_node, statements: list[ast.stmt]):
-        """Visit an AST node and create a temporary variable for its result."""
-        values = visitor.visit(ast_node)
-        # If visiting returns a list, preceding items are statements; last is the value
-        if isinstance(values, list):
-            statements.extend(values[:-1])
-            value = values[-1]
-        else:
-            value = values
-        name = self.create_temporary_variable_name()
-        statements.append(AST.assignment(name, value))
-        var_type = TypeFactory.get_type_from_ast(value)
-        var = LocalVariableSource(var_type, name)
-        self.add_variable(var)
-        return var
-
     def lower_value_expression(self, visitor, ast_node: ast.AST, statements: list[ast.stmt]) -> ast.AST:
         """Lower an expression without recording an inferred Python-side type.
 
         Keyed source access still needs source lookup. Ordinary locals and
         expressions are left for Numba to type in the generated function.
         """
-        if isinstance(ast_node, ast.Subscript) and isinstance(ast_node.value, ast.Name):
-            container = self.from_name(ast_node.value.id)
-            if hasattr(container, "key_to_child_name") and hasattr(container, "create_dynamic_access"):
-                return self._handle_container_subscript(visitor, container, ast_node.slice).get()
+        keyed_source = self.resolve_keyed_source(visitor, ast_node)
+        if keyed_source is not None:
+            return keyed_source.get()
 
         value = visitor.visit(ast_node)
         if isinstance(value, list):
@@ -442,7 +347,7 @@ class VariableFactory:
 
             if child_var_name is None:
                 raise KeyError(f"Container has no key '{key}'")
-            child_var = self.from_name(child_var_name)
+            child_var = self.from_source_name(child_var_name)
             if child_var is None:
                 raise RuntimeError(f"Internal error: child variable '{child_var_name}' not found for key '{key}'")
             # If child has skip_pre_read, it was never loaded into a local variable.
@@ -453,7 +358,7 @@ class VariableFactory:
             return child_var
 
         if isinstance(key_node, ast.Name):
-            key_var = self.from_name(key_node.id)
+            key_var = self.from_source_name(key_node.id)
             if key_var is not None and hasattr(key_var, "resolve_index_expr"):
                 return container.create_dynamic_access(key_var.resolve_index_expr(container), variable_factory=self)
 
@@ -461,46 +366,11 @@ class VariableFactory:
         index_expr = visitor.visit(key_node) if visitor else key_node
         return container.create_dynamic_access(index_expr, variable_factory=self)
 
-    def from_ast(self, visitor, ast_node: ast.AST, statements: list[ast.stmt]):
-        if isinstance(ast_node, ast.Name):
-            existing = self.from_name(ast_node.id)
-            if existing is not None:
-                return existing
-            # Unknown variable - create with unknown type
-            var = LocalVariableSource(UnknownType(UnknownNumbaType(), ast_node), ast_node.id)
-            self.add_variable(var)
-            return var
-
-        if isinstance(ast_node, ast.Constant):
-            name = self.create_temporary_variable_name()
-            var_type = TypeFactory.get_type(type(ast_node.value))
-            var = LocalConstantSource(var_type, name, ast_node.value)
-            self.add_variable(var)
-            return var
-
-        if isinstance(ast_node, ast.Subscript) and isinstance(ast_node.value, ast.Name):
-            container = self.from_name(ast_node.value.id)
-            # Duck-typed: any container with key_to_child_name and create_dynamic_access
-            if hasattr(container, "key_to_child_name") and hasattr(container, "create_dynamic_access"):
-                return self._handle_container_subscript(visitor, container, ast_node.slice)
-
-        # Default: visit expression and create a temporary variable
-        return self._visit_and_create_temp_var(visitor, ast_node, statements)
-
-    def add_alias(self, alias_name: str, variable: VariableSource):
-        """
-        Register an alias for an existing variable so future lookups by alias_name
-        return the same VariableSource (preserving source-specific methods).
-        """
-        if alias_name in self.variable_name_map:
-            raise ValueError(f"variable {alias_name} already exists")
-        self.variable_name_map[alias_name] = variable
-
-    def copy_source(self, src: VariableSource, new_name: str):
-        """
-        Create a new VariableSource of the same subclass as `src`, pointing to the same underlying storage
-        (array index, pointer semantics, etc.) but with a distinct name for type tracking.
-        """
-        if new_name in self.variable_name_map:
-            raise ValueError(f"variable {new_name} already exists")
-        return src.clone_with_name(new_name)
+    def resolve_keyed_source(self, visitor, ast_node: ast.AST):
+        """Resolve host-backed keyed access without inferring an expression type."""
+        if not isinstance(ast_node, ast.Subscript) or not isinstance(ast_node.value, ast.Name):
+            return None
+        container = self.from_source_name(ast_node.value.id)
+        if not hasattr(container, "key_to_child_name") or not hasattr(container, "create_dynamic_access"):
+            return None
+        return self._handle_container_subscript(visitor, container, ast_node.slice)

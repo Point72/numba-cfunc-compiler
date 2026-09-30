@@ -20,9 +20,6 @@ from numba_cfunc_compiler.post_compilation import (
 )
 from numba_cfunc_compiler.source_registry import SourceRegistry
 from numba_cfunc_compiler.standalone.dict import (
-    _standalone_dict_iter_begin,
-    _standalone_dict_iter_next_item,
-    _standalone_dict_iter_next_key,
     standalone_dict_free,
     standalone_dict_from_voidptr,
     standalone_dict_length,
@@ -41,7 +38,6 @@ from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.enum import make_enum
 from numba_cfunc_compiler.utils.enumset import make_enumset
 from numba_cfunc_compiler.utils.ffi import FFIMethodHelper
-from numba_cfunc_compiler.utils.struct import StructHelper
 from numba_cfunc_compiler.variable_factory import (
     VariableFactory,
 )
@@ -280,10 +276,6 @@ def create_compiled_func(
             "float64": float64,
             "voidptr": numba.types.voidptr,
             "cast_voidptr_to_ptr": AST.cast_voidptr_to_ptr,
-            "struct_field_access": StructHelper.struct_field_access,
-            "struct_field_ptr": StructHelper.struct_field_ptr,
-            "struct_field_store": StructHelper.struct_field_store,
-            "struct_memcpy": StructHelper.struct_memcpy,
             "primitive_output_store": primitive_output_store,
             "voidptr_null": AST.voidptr_null,
             "ffi_tuple_args": AST.ffi_tuple_args,
@@ -304,9 +296,6 @@ def create_compiled_func(
             "standalone_dict_free": standalone_dict_free,
             "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
             "standalone_dict_length": standalone_dict_length,
-            "_standalone_dict_iter_begin": _standalone_dict_iter_begin,
-            "_standalone_dict_iter_next_item": _standalone_dict_iter_next_item,
-            "_standalone_dict_iter_next_key": _standalone_dict_iter_next_key,
         }
     )
     exec_globals.update(variable_factory.typed_struct_bindings)

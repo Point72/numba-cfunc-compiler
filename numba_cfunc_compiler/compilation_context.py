@@ -36,12 +36,6 @@ class CompilationContext:
         # -- ASTHandlerRegistry state --
         self.ast_handlers: dict[str, dict[Any, list]] = {}
 
-        # -- NumbaTypeInference state --
-        self.assignment_handlers: list[Any] = []
-        self.call_handlers: list[Any] = []
-        self.attr_accessors: list[Any] = []
-        self.attr_lowerers: list[Any] = []
-
         # -- FFIMethodHelper state --
         self.ffi_opcode_cache: dict[str, int] = {}
         self.ffi_next_opcode: int = 1

@@ -1,14 +1,8 @@
 import ast
 import copy
 
-from numba_cfunc_compiler.defaults.struct_support import StructType
 from numba_cfunc_compiler.models import (
     ContainerType,
-    NoneType,
-    UnknownType,
-)
-from numba_cfunc_compiler.numba_type_inference import (
-    NumbaTypeInference,
 )
 from numba_cfunc_compiler.source_registry import (
     SourceCategoryId,
@@ -19,6 +13,7 @@ from numba_cfunc_compiler.state_ast import (
     is_state_annotation,
     state_annotation_target,
 )
+from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.variable_factory import (
     VariableFactory,
 )
@@ -55,7 +50,6 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.variable_factory = variable_factory
         self.variable_factory.ast_converter = self
         self.call_globals = call_globals or {}
-        self.numba_type_inference = NumbaTypeInference(variable_factory, self.call_globals)
         self.start_body = start_body or []
         self.stop_body = stop_body or []
 
@@ -191,20 +185,8 @@ class NumbaASTConverter(ast.NodeTransformer):
             if (isinstance(elt, ast.Name) and elt.id == "None") or (isinstance(elt, ast.Constant) and elt.value is None):
                 continue
 
-            if output_var.uses_numba_output_type():
-                value = self.variable_factory.lower_value_expression(self, elt, statements)
-                statements.append(output_var.write(value))
-                statements.append(output_var.call("output", None))
-                continue
-
-            # get or create a local variable for the return value
-            var = self.variable_factory.from_ast(visitor=self, ast_node=elt, statements=statements)
-
-            if isinstance(var.type, UnknownType) and isinstance(var.type.runtime_value, NoneType):
-                continue
-
-            value = var.get()
-            statements.append(output_var.write(value, var.type))
+            value = self.variable_factory.lower_value_expression(self, elt, statements)
+            statements.append(output_var.write(value))
             statements.append(output_var.call("output", None))
 
         # Add a void return at the end
@@ -214,9 +196,19 @@ class NumbaASTConverter(ast.NodeTransformer):
     @with_handlers("Call")
     def visit_Call(self, node):
         if isinstance(node.func, ast.Attribute):
-            final_var = self.numba_type_inference.handle_call_chain(node)
-            if final_var is not None:
-                return final_var.get()
+            base = node.func.value
+            source = None
+            if isinstance(base, ast.Name):
+                source = self.variable_factory.from_source_name(base.id)
+            elif isinstance(base, ast.Subscript):
+                source = self.variable_factory.resolve_keyed_source(self, base)
+            if source is not None:
+                method = getattr(source.handler, "METHODS", {}).get(node.func.attr)
+                if method is not None:
+                    args = [self.visit(arg) for arg in node.args]
+                    result = source.call(node.func.attr, args)
+                    if result is not None:
+                        return result
 
         return self.generic_visit(node)
 
@@ -228,55 +220,36 @@ class NumbaASTConverter(ast.NodeTransformer):
                 invalid_call_str = ast.unparse(node.value)
                 raise ValueError(f"set_output expects exactly 2 arguments: (name, value) got {invalid_call_str}")
             return AST.set_output(self.variable_factory, self, node.value.args[0], node.value.args[1])
-        return self.generic_visit(node)
+        value = self.visit(node.value)
+        if isinstance(value, (ast.stmt, list)):
+            return value
+        node.value = value
+        return node
 
     @with_handlers("Subscript")
     def visit_Subscript(self, node):
-        # included here so user types that require subscripting work
+        source = self.variable_factory.resolve_keyed_source(self, node)
+        if source is not None and isinstance(node.ctx, ast.Load):
+            return source.get()
         return self.generic_visit(node)
 
     @with_handlers("Attribute")
     def visit_Attribute(self, node):
-        result = self.numba_type_inference.try_attr_lowerers(node)
-        if result is not None:
-            return result
         return self.generic_visit(node)
 
     @with_handlers("Assign")
     def visit_Assign(self, node):
-        # Single target only
         if len(node.targets) != 1:
             return self.generic_visit(node)
 
         target = node.targets[0]
-
-        # Case 1: Struct field assignment (my_struct.field = expr)
-        if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-            base_name = target.value.id
-            field_name = target.attr
-            base_var = self.variable_factory.from_name(base_name)
-
-            if base_var is not None and isinstance(base_var.type, StructType) and not base_var.type.typed_view:
-                # Visit RHS first to transform any nested expressions
-                value_expr = self.visit(node.value)
-                # Generate struct_field_store call
-                store_call = base_var.type.set_field(base_name, field_name, value_expr)
-                return ast.Expr(value=store_call)
-
-        # Case 2: Existing managed variables
         if isinstance(target, ast.Name):
-            assignment = self.numba_type_inference.create_assignment_variable(node, node.value)
-            if assignment is not None:
-                return assignment
-
-        # Case 3: Try lowering assignment via registered type classes
-        rhs = node.value
-        assign = self.numba_type_inference.try_lower_assignment(node, rhs)
-        if assign is not None:
-            # assign may be a list of statements or a single AST node
-            if isinstance(assign, list):
-                return [self.visit(stmt) if isinstance(stmt, ast.AST) else stmt for stmt in assign]
-            return self.generic_visit(assign)
+            source = self.variable_factory.from_source_name(target.id)
+            if source is not None:
+                return AST.assignment(source.get(), self.visit(node.value))
+            lowered = TypeFactory.try_lower_assignment(node, node.value, self.call_globals)
+            if lowered is not None:
+                return [self.visit(stmt) for stmt in lowered]
 
         return self.generic_visit(node)
 
@@ -286,30 +259,7 @@ class NumbaASTConverter(ast.NodeTransformer):
 
     @with_handlers("Compare")
     def visit_Compare(self, node):
-        node = self.generic_visit(node)
-
-        transformed_left = self.numba_type_inference.try_attr_lowerers(node.left)
-        if transformed_left is not None:
-            node.left = transformed_left
-        elif isinstance(node.left, ast.Name):
-            var = self.variable_factory.from_name(node.left.id)
-            if var is not None:
-                node.left = var.get()
-
-        # Transform comparators
-        new_comparators = []
-        for comp in node.comparators:
-            transformed_comp = self.numba_type_inference.try_attr_lowerers(comp)
-            if transformed_comp is not None:
-                comp = transformed_comp
-            elif isinstance(comp, ast.Name):
-                var = self.variable_factory.from_name(comp.id)
-                if var is not None:
-                    comp = var.get()
-            new_comparators.append(comp)
-        node.comparators = new_comparators
-
-        return node
+        return self.generic_visit(node)
 
     @with_handlers("For")
     def visit_For(self, node):
@@ -317,8 +267,8 @@ class NumbaASTConverter(ast.NodeTransformer):
 
     @with_handlers("Name")
     def visit_Name(self, node):
-        var = self.variable_factory.from_name(node.id)
-        # Let managed variables decide how to represent themselves
+        var = self.variable_factory.from_source_name(node.id)
+        # Only declared sources need host storage rewrites. Numba owns locals.
         if var is not None:
             return var.read_value() if isinstance(node.ctx, ast.Load) else var.get()
         return node
@@ -326,7 +276,7 @@ class NumbaASTConverter(ast.NodeTransformer):
     def visit_AnnAssign(self, node):
         if is_state_annotation(node):
             var_name = state_annotation_target(node)
-            var = self.variable_factory.from_name(var_name)
+            var = self.variable_factory.from_source_name(var_name)
             if getattr(var, "category", None) != SourceCategoryId.STATE:
                 raise TypeError(f"{var_name} is not a state variable")
             return None

@@ -1,4 +1,4 @@
-"""Opt-in struct views through the generated node callback ABI."""
+"""Typed struct views through the generated node callback ABI."""
 
 import ctypes
 import inspect
@@ -41,7 +41,6 @@ class OtherQuote(ctypes.Structure):
 
 
 class TypedQuoteType(StructType):
-    typed_view = True
     storage_type = Quote
 
     @classmethod
@@ -77,10 +76,6 @@ class OtherTypedQuoteType(TypedQuoteType):
         return var_type is OtherQuote
 
 
-class LegacyQuoteType(TypedQuoteType):
-    typed_view = False
-
-
 @register_jitable(inline="always")
 def quote_adjustment(quote):
     return quote.price + quote.count
@@ -108,13 +103,6 @@ def update_quote(q: Signal[Quote]) -> Signal[Quote]:
     alias.price += 1.5
     alias.count = alias.count + 2
     return alias
-
-
-@numba_node
-def update_legacy_quote(q: Signal[Quote]) -> Signal[Quote]:
-    q.price = q.price + 1.5
-    q.count = q.count + 2
-    return q
 
 
 @numba_node
@@ -306,14 +294,6 @@ def test_layout_changes_native_behavior_and_semantic_key_across_contexts():
     )
 
 
-def test_legacy_struct_keeps_existing_field_and_output_lowering():
-    result = _compile(update_legacy_quote, LegacyQuoteType)
-    source = Quote(1.0, 1)
-    output = Quote()
-    assert _execute(result, source, output)
-    assert (output.price, output.count) == (2.5, 3)
-
-
 def test_typed_layout_rejects_bad_width_and_unsupported_field():
     class BadWidth(TypedQuoteType):
         @classmethod
@@ -328,7 +308,7 @@ def test_typed_layout_rejects_bad_width_and_unsupported_field():
         def _get_struct_fields(cls, var_type):
             return {"price": StructFieldInfo("price", 0, "boolean", 1)}
 
-    with pytest.raises(TypeError, match="unsupported typed-view type"):
+    with pytest.raises(TypeError, match="unsupported type"):
         BadType.from_type(Quote, None).get_typed_layout()
 
 

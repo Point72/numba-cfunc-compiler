@@ -89,7 +89,7 @@ class AST:
             raise TypeError(f"set_output name must be a string constant matching an output name: {invalid_name_str}")
 
         name = name_node.value
-        output_var = variable_factory.from_name(name)
+        output_var = variable_factory.from_source_name(name)
         if output_var is None:
             raise KeyError(f"set_output called with unknown output name '{name}'")
         # Verify it is actually an output
@@ -100,13 +100,8 @@ class AST:
         idx = output_var.array_idx
 
         statements: list[ast.stmt] = []
-        if output_var.uses_numba_output_type():
-            value_expr = variable_factory.lower_value_expression(visitor, value_node, statements)
-            statements.append(output_var.write(value_expr))
-        else:
-            # Legacy sources still use their Python-side type metadata.
-            var = variable_factory.from_ast(visitor=visitor, ast_node=value_node, statements=statements)
-            statements.append(output_var.write(var.get(), var.type))
+        value_expr = variable_factory.lower_value_expression(visitor, value_node, statements)
+        statements.append(output_var.write(value_expr))
 
         # Mark the output as ticked after its value is written.
         tick_lhs = AST.array_access(TICKED_OUTPUTS_ARRAY_NAME, idx)

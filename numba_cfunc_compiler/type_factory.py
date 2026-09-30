@@ -8,7 +8,6 @@ from numba_cfunc_compiler.models import (
     ParameterInfo,
     StateVariableInfo,
     UnknownNumbaType,
-    UnknownNumbaValue,
     UnknownType,
     VariableType,
 )
@@ -45,16 +44,6 @@ class TypeFactory:
         return UnknownType(UnknownNumbaType(), var_type)
 
     @classmethod
-    def get_type_from_ast(cls, node: ast.AST) -> VariableType:
-        from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
-
-        if isinstance(node, ast.Constant):
-            return cls.get_type(type(node.value), node.value)
-        if isinstance(node, ast.Compare):
-            return PrimitiveType(bool, UnknownNumbaValue())
-        return UnknownType(UnknownNumbaType(), node)
-
-    @classmethod
     def get_type_size(cls, var_type: Any) -> int:
         for type_class in CompilationContext.current().type_classes:
             if type_class.is_type_supported(var_type):
@@ -62,8 +51,8 @@ class TypeFactory:
         raise ValueError(f"No registered type class supports type: {var_type}")
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, VariableType] | None:
-        """Try to lower/transform an assignment by querying registered type classes."""
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
+        """Lower syntax-specific constructors without recording a local type."""
         for type_class in CompilationContext.current().type_classes:
             result = type_class.try_lower_assignment(node, rhs, call_globals)
             if result is not None:

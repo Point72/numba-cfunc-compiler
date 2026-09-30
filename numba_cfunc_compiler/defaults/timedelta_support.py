@@ -40,7 +40,7 @@ class TimeDeltaType(VariableType):
         return None
 
     @classmethod
-    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> tuple[list, "TimeDeltaType"] | None:
+    def try_lower_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
         """Lower: x = timedelta(seconds=5) → x = <nanoseconds>"""
         if not isinstance(rhs, ast.Call):
             return None
@@ -57,9 +57,7 @@ class TimeDeltaType(VariableType):
 
         var_name = node.targets[0].id
         nanos = cls.to_nanos(val)
-        var_type = cls(_PyTimedelta, val)
-
-        return AST.assignment(var_name, ast.Constant(value=nanos)), var_type
+        return [AST.assignment(var_name, ast.Constant(value=nanos))]
 
     @classmethod
     def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:

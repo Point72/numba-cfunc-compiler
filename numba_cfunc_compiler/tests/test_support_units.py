@@ -13,15 +13,13 @@ from numba_cfunc_compiler.ast_handlers import ASTHandlerRegistry, HandlerPhase, 
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.defaults import register_all
 from numba_cfunc_compiler.defaults.datetime_support import DateTimeType
-from numba_cfunc_compiler.defaults.dict_support import NumbaDictType, handle_dict_contains, handle_dict_for
-from numba_cfunc_compiler.defaults.list_support import NumbaListType, handle_list_for
+from numba_cfunc_compiler.defaults.dict_support import NumbaDictType
+from numba_cfunc_compiler.defaults.list_support import NumbaListType
 from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
 from numba_cfunc_compiler.defaults.struct_support import (
     StructFieldInfo,
     StructType,
     is_struct_type,
-    struct_attr_handler,
-    struct_attribute_transformer,
 )
 from numba_cfunc_compiler.defaults.timedelta_support import TimeDeltaType
 from numba_cfunc_compiler.method_factory import Output
@@ -35,7 +33,6 @@ from numba_cfunc_compiler.models import (
     ParameterInfo,
     StateAnalysis,
     StateVariableInfo,
-    UnknownNumbaType,
     UnknownNumbaValue,
     UnknownType,
     VariableType,
@@ -46,7 +43,6 @@ from numba_cfunc_compiler.node_api import (
     create_new_dict,
     create_new_list,
 )
-from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 from numba_cfunc_compiler.source_registry import CfuncParam, SourceCategory, SourceInitFilter, SourceRegistry
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.type_registry import NumbaTypeInfo, NumbaTypeRegistry
@@ -57,7 +53,6 @@ from numba_cfunc_compiler.utils.types import TypeHelper
 from numba_cfunc_compiler.variable_factory import (
     ConstantSource,
     ExpressionSource,
-    LocalConstantSource,
     LocalVariableSource,
     OutputSource,
     VariableFactory,
@@ -104,14 +99,12 @@ def test_datetime_timedelta():
     assert TimeDeltaType.from_type(object, UnknownNumbaValue()) is None
 
     dt_assign = parse_stmt("stamp = datetime(2020, 1, 1, tzinfo=timezone.utc)")
-    lowered, var_type = DateTimeType.try_lower_assignment(dt_assign, dt_assign.value, {})
-    assert var_type.value is datetime
-    assert unparse(lowered).startswith("stamp = ")
+    lowered = DateTimeType.try_lower_assignment(dt_assign, dt_assign.value, {})
+    assert unparse(lowered[0]).startswith("stamp = ")
 
     td_assign = parse_stmt("span = timedelta(seconds=5)")
-    lowered, var_type = TimeDeltaType.try_lower_assignment(td_assign, td_assign.value, {})
-    assert var_type.value is timedelta
-    assert unparse(lowered) == "span = 5000000000"
+    lowered = TimeDeltaType.try_lower_assignment(td_assign, td_assign.value, {})
+    assert unparse(lowered[0]) == "span = 5000000000"
 
     assert DateTimeType.try_lower_assignment(parse_stmt("x = 1"), ast.Constant(1), {}) is None
     assert TimeDeltaType.try_lower_assignment(parse_stmt("x = 1"), ast.Constant(1), {}) is None
@@ -163,7 +156,7 @@ def test_list_type():
         list_type = NumbaListType(marker, [1, 2])
         assert list_type.get_numba_type_name() == "voidptr"
         assert list_type.is_opaque_pointer()
-        assert [m.get_name() for m in list_type.get_methods()] == ["append", "pop", "clear"]
+        assert list_type.get_methods() == []
         assert NumbaListType.is_type_supported(marker)
         assert not NumbaListType.is_type_supported(int)
 
@@ -187,8 +180,7 @@ def test_list_type():
             NumbaListType.create_local_from_type_name("items", "str")
 
         assign = parse_stmt("items = create_new_list(int)")
-        lowered, lowered_type = NumbaListType.try_lower_assignment(assign, assign.value, {})
-        assert isinstance(lowered_type, NumbaListType)
+        lowered = NumbaListType.try_lower_assignment(assign, assign.value, {})
         assert len(lowered) == 2
         assert NumbaListType.try_lower_assignment(parse_stmt("items = 1"), ast.Constant(1), {}) is None
         assert NumbaListType.try_lower_assignment(parse_stmt("items = make_list(int)"), parse_expr("make_list(int)"), {}) is None
@@ -234,7 +226,7 @@ def test_dict_type():
         dict_type = NumbaDictType(marker, {1: 2.5})
         assert dict_type.get_numba_type_name() == "voidptr"
         assert dict_type.is_opaque_pointer()
-        assert [m.get_name() for m in dict_type.get_methods()] == ["get", "pop", "clear", "contains"]
+        assert dict_type.get_methods() == []
         assert NumbaDictType.is_type_supported(marker)
         assert not NumbaDictType.is_type_supported(int)
 
@@ -258,8 +250,7 @@ def test_dict_type():
             NumbaDictType.create_local_from_type_names("mapping", "int", "str")
 
         assign = parse_stmt("mapping = create_new_dict(int, float)")
-        lowered, lowered_type = NumbaDictType.try_lower_assignment(assign, assign.value, {})
-        assert isinstance(lowered_type, NumbaDictType)
+        lowered = NumbaDictType.try_lower_assignment(assign, assign.value, {})
         assert len(lowered) == 2
         assert NumbaDictType.try_lower_assignment(parse_stmt("mapping = 1"), ast.Constant(1), {}) is None
         assert NumbaDictType.try_lower_assignment(parse_stmt("mapping = make_dict(int, float)"), parse_expr("make_dict(int, float)"), {}) is None
@@ -300,48 +291,6 @@ def test_dict_type():
             NumbaDictType.validate_input("values", {1: 2}, marker)
 
 
-def test_container_loops():
-    with default_context():
-        factory = VariableFactory()
-        list_var = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "items")
-        dict_var = LocalVariableSource(NumbaDictType(DictTypeMarker(int, int), None), "mapping")
-        factory.add_variable(list_var)
-        factory.add_variable(dict_var)
-
-        class Converter:
-            variable_factory = factory
-
-            def visit(self, stmt):
-                return stmt
-
-        converter = Converter()
-        list_loop = parse_stmt("for value in items:\n    total = total + value")
-        rewritten = handle_list_for(converter, list_loop)
-        assert isinstance(rewritten, ast.For)
-        assert unparse(rewritten).startswith("for _li")
-        assert handle_list_for(converter, parse_stmt("for value in range(3):\n    pass")) is None
-        assert handle_list_for(converter, parse_stmt("for value in missing:\n    pass")) is None
-
-        items_loop = parse_stmt("for key, value in mapping.items():\n    total = total + value")
-        items_result = handle_dict_for(converter, items_loop)
-        assert len(items_result.side_effects) == 1
-        assert "_standalone_dict_iter_next_item" in unparse(items_result.node)
-
-        keys_loop = parse_stmt("for key in mapping.keys():\n    total = total + key")
-        keys_result = handle_dict_for(converter, keys_loop)
-        assert "_standalone_dict_iter_next_key" in unparse(keys_result.node)
-        direct_keys_result = handle_dict_for(converter, parse_stmt("for key in mapping:\n    total = total + key"))
-        assert "_standalone_dict_iter_next_key" in unparse(direct_keys_result.node)
-        assert handle_dict_for(converter, parse_stmt("for key in missing:\n    pass")) is None
-
-        contains = handle_dict_contains(converter, parse_expr("1 in mapping"))
-        assert unparse(contains) == "mapping.contains(1)"
-        not_contains = handle_dict_contains(converter, parse_expr("1 not in mapping"))
-        assert unparse(not_contains) == "not mapping.contains(1)"
-        assert handle_dict_contains(converter, parse_expr("1 < 2")) is None
-        assert handle_dict_contains(converter, parse_expr("1 in missing")) is None
-
-
 class ExampleStruct:
     price: float
     count: int
@@ -375,77 +324,22 @@ def test_struct_helpers():
         assert ExampleStructType.from_type(object, UnknownNumbaValue()) is None
         assert struct_type.get_numba_type_name() == "voidptr"
         assert struct_type.is_opaque_pointer()
-        assert struct_type.get_methods() == []
         assert struct_type.get_size() == 24
         assert is_struct_type(struct_type)
         assert not is_struct_type(TypeFactory.get_type(int))
-
-        output = OutputSource(0, struct_type, "result")
-        assert unparse(output.write(ast.Name(id="order", ctx=ast.Load()), struct_type)) == ("struct_memcpy(output_0_ptr, order, 24)")
-        with pytest.raises(TypeError, match="expected struct"):
-            output.write(ast.Constant(1), TypeFactory.get_type(int))
-
-        class OtherStruct:
-            pass
-
-        other_type = StructType(OtherStruct, UnknownNumbaValue(), fields={}, size=24)
-        with pytest.raises(TypeError, match="struct type"):
-            output.write(ast.Name(id="other", ctx=ast.Load()), other_type)
-
-        wrong_size_type = StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=8)
-        with pytest.raises(TypeError, match="struct size"):
-            output.write(ast.Name(id="order", ctx=ast.Load()), wrong_size_type)
-
-        invalid_output = OutputSource(
-            0,
-            StructType(ExampleStruct, UnknownNumbaValue(), fields={}, size=0),
-            "result",
-        )
-        with pytest.raises(TypeError, match="invalid size"):
-            invalid_output.write(ast.Name(id="order", ctx=ast.Load()), invalid_output.type)
-
-        assert unparse(struct_type.get_field("order", "price")) == "struct_field_access(order, 0, 'float64')"
-        assert unparse(struct_type.get_field(ast.Name(id="ptr", ctx=ast.Load()), "count")) == "struct_field_access(ptr, 8, 'int64')"
-        assert unparse(struct_type.set_field("order", "count", ast.Constant(7))) == "struct_field_store(order, 8, 'int64', 7)"
-        with pytest.raises(KeyError, match="missing"):
-            struct_type.get_field("order", "missing")
-        with pytest.raises(TypeError, match="voidptr"):
-            struct_type.get_field("order", "nested")
-        with pytest.raises(TypeError, match="no field metadata"):
-            StructType(ExampleStruct, None).get_field("order", "price")
+        layout = struct_type.get_typed_layout()
+        assert [field.name for field in layout.fields] == ["price", "count"]
+        assert layout.size == 24
 
         factory = VariableFactory()
-        struct_var = LocalVariableSource(struct_type, "order")
-        factory.add_variable(struct_var)
-        transformed = struct_attribute_transformer(parse_expr("order.price"), {}, factory)
-        assert unparse(transformed) == "struct_field_access(order, 0, 'float64')"
-        assert struct_attribute_transformer(parse_expr("missing.price"), {}, factory) is None
-        assert struct_attribute_transformer(parse_expr("order.nested"), {}, factory) is None
-        assert struct_attribute_transformer(parse_expr("order.price"), {}, None) is None
-
-        class DynamicAccess:
-            def get(self):
-                return ast.Name(id="dynamic_order", ctx=ast.Load())
-
-        class Container:
-            key_to_child_name: ClassVar[dict[int, str]] = {0: "order"}
-            element_type = struct_type
-
-            def create_dynamic_access(self, index, variable_factory):
-                return DynamicAccess()
-
-        factory.variable_name_map["basket"] = Container()
-        dynamic = struct_attribute_transformer(parse_expr("basket[i].price"), {}, factory)
-        assert unparse(dynamic) == "struct_field_access(dynamic_order, 0, 'float64')"
-
-        inference = NumbaTypeInference(factory)
-        attr_source = struct_attr_handler(inference, struct_var, "price", [])
-        assert isinstance(attr_source, ExpressionSource)
-        assert unparse(attr_source.get()) == "struct_field_access(order, 0, 'float64')"
-        assert struct_attr_handler(inference, LocalVariableSource(TypeFactory.get_type(int), "x"), "price", []) is None
-        assert struct_attr_handler(inference, LocalVariableSource(StructType(None, None), "x"), "price", []) is None
-        assert struct_attr_handler(inference, struct_var, "missing", []) is None
-        assert struct_attr_handler(inference, struct_var, "nested", []) is None
+        output = OutputSource(0, struct_type, "result")
+        factory.add_variable(output)
+        assert "_typed_struct_copy_" in unparse(output.write(ast.Name(id="order", ctx=ast.Load())))
+        with pytest.raises(TypeError, match="invalid size"):
+            invalid = OutputSource(0, StructType(ExampleStruct, None, fields={}, size=0), "invalid")
+            invalid.write(ast.Name(id="order", ctx=ast.Load()))
+        with pytest.raises(TypeError, match="no field metadata"):
+            StructType(ExampleStruct, None).get_typed_layout()
 
 
 def test_models_and_registries():
@@ -489,9 +383,6 @@ def test_models_and_registries():
         assert isinstance(unknown, UnknownType)
         with pytest.raises(ValueError, match="UnknownType"):
             unknown.get_numba_type_name()
-        assert TypeFactory.get_type_from_ast(ast.Constant(True)).value is bool
-        assert TypeFactory.get_type_from_ast(parse_expr("1 < 2")).value is bool
-        assert isinstance(TypeFactory.get_type_from_ast(parse_expr("x + 1")), UnknownType)
         assert TypeFactory.get_type_size(int) == 8
         with pytest.raises(ValueError, match="No registered type class"):
             TypeFactory.get_type_size(str)
@@ -626,8 +517,6 @@ def test_variable_sources():
         with pytest.raises(NotImplementedError, match="write method"):
             source.write()
         assert not source.is_opaque_pointer()
-        clone = source.clone_with_name("y")
-        assert clone.name == "y"
 
         void_source = VoidPtrSource(0, int_type, "x", "inputs")
         assert unparse(void_source.read()) == "x = cast_voidptr_to_ptr(inputs[0], 'int64')"
@@ -651,9 +540,6 @@ def test_variable_sources():
         assert unparse(local.get()) == "local"
         expr = ExpressionSource(int_type, ast.BinOp(ast.Constant(1), ast.Add(), ast.Constant(2)), VariableFactory())
         assert unparse(expr.get()) == "1 + 2"
-        assert LocalConstantSource(int_type, "const", 9).get().value == 9
-        with pytest.raises(ValueError, match="LocalConstantSource"):
-            LocalConstantSource(UnknownType(UnknownNumbaType(), object), "const", object()).get()
 
         const = ConstantSource(int_type, "factor")
         assert unparse(const.read()) == "factor = 1"
@@ -666,8 +552,8 @@ def test_variable_sources():
         factory = VariableFactory()
         factory.add_variable(output)
         assert factory.get_source(OutputSource) == [output]
-        assert factory.from_name("result") is output
-        assert factory.from_name("missing") is None
+        assert factory.from_source_name("result") is output
+        assert factory.from_source_name("missing") is None
         with pytest.raises(TypeError, match="subclass"):
             factory.get_source(int)
         with pytest.raises(ValueError, match="already exists"):
@@ -678,17 +564,9 @@ def test_variable_sources():
             factory.get_output_by_idx(1)
 
         factory = VariableFactory()
-        var, assign = factory.add_local_variable(int, "x", ast.Constant(1))
-        assert var.name == "x"
-        assert unparse(assign) == "x = 1"
-        temp = factory.create_temporary_variable(bool, ast.Constant(True), [])
-        assert temp.name == "tmp_0"
-        assert factory.create_temporary_variable_name() == "tmp_1"
-        assert factory.from_ast(None, ast.Name(id="x", ctx=ast.Load()), []) is var
-        unknown = factory.from_ast(None, ast.Name(id="new_name", ctx=ast.Load()), [])
-        assert isinstance(unknown.type, UnknownType)
-        literal = factory.from_ast(None, ast.Constant(10), [])
-        assert isinstance(literal, LocalConstantSource)
+        var = LocalVariableSource(int_type, "x")
+        factory.add_variable(var)
+        assert factory.from_source_name("x") is var
 
         class FakeContainer:
             key_to_child_name: ClassVar[dict[str, str]] = {"a": "child"}
@@ -702,35 +580,26 @@ def test_variable_sources():
 
         child = LocalVariableSource(int_type, "child")
         factory.add_variable(child)
-        factory.variable_name_map["bag"] = FakeContainer()
-        assert factory.from_ast(None, parse_expr("bag['a']"), []) is child
+        factory.source_name_map["bag"] = FakeContainer()
+        assert factory.resolve_keyed_source(None, parse_expr("bag['a']")) is child
         assert unparse(factory.lower_value_expression(None, parse_expr("bag['a']"), [])) == "child"
-        assert factory.from_ast(None, parse_expr("bag[0]"), []) is child
+        assert factory.resolve_keyed_source(None, parse_expr("bag[0]")) is child
         with pytest.raises(KeyError, match="no key"):
-            factory.from_ast(None, parse_expr("bag['missing']"), [])
+            factory.resolve_keyed_source(None, parse_expr("bag['missing']"))
         child.skip_pre_read = True
-        assert isinstance(factory.from_ast(None, parse_expr("bag['a']"), []), ExpressionSource)
+        assert isinstance(factory.resolve_keyed_source(None, parse_expr("bag['a']")), ExpressionSource)
 
         class KeyVar:
             def resolve_index_expr(self, container):
                 return ast.Constant(0)
 
-        factory.variable_name_map["idx"] = KeyVar()
-        assert isinstance(factory.from_ast(None, parse_expr("bag[idx]"), []), ExpressionSource)
+        factory.source_name_map["idx"] = KeyVar()
+        assert isinstance(factory.resolve_keyed_source(None, parse_expr("bag[idx]")), ExpressionSource)
 
         statements = []
-        created = factory.from_ast(SimpleNamespace(visit=lambda node: ast.Constant(99)), parse_expr("x + 1"), statements)
-        assert created.name.startswith("tmp_")
-        assert statements
-
-        factory.add_alias("x_alias", var)
-        assert factory.from_name("x_alias") is var
-        with pytest.raises(ValueError, match="already exists"):
-            factory.add_alias("x", var)
-        copied = factory.copy_source(var, "x_copy")
-        assert copied.name == "x_copy"
-        with pytest.raises(ValueError, match="already exists"):
-            factory.copy_source(var, "x")
+        lowered = factory.lower_value_expression(SimpleNamespace(visit=lambda node: ast.Constant(99)), parse_expr("x + 1"), statements)
+        assert lowered.value == 99
+        assert statements == []
 
 
 def test_ffi_methods():
@@ -840,82 +709,16 @@ def test_ast_handlers():
         assert result.id == "decorated"
 
 
-def test_type_inference():
+def test_declared_source_method_lowering():
+    from numba_cfunc_compiler.numba_ast_converter import NumbaASTConverter
+
     with default_context():
         factory = VariableFactory()
-        inference = NumbaTypeInference(factory)
-        int_type = TypeFactory.get_type(int)
-        x_var = LocalVariableSource(int_type, "x")
-        factory.add_variable(x_var)
-
-        def call_handler(inf, base_var, method_name, args):
-            if method_name == "double":
-                return ExpressionSource(int_type, ast.BinOp(base_var.get(), ast.Mult(), ast.Constant(2)), inf.variable_factory)
-            return None
-
-        def attr_handler(inf, base_var, attr_name, args):
-            if attr_name == "value":
-                return ExpressionSource(int_type, ast.Constant(42), inf.variable_factory)
-            return None
-
-        NumbaTypeInference.register_call_handler(call_handler)
-        NumbaTypeInference.register_attr_accessor(attr_handler)
-        assert unparse(inference.handle_call_chain(parse_expr("x.double()")).get()) == "x * 2"
-        assert inference.handle_call_chain(parse_expr("x.value")).get().value == 42
-        assert inference.handle_call_chain(ast.Constant(1)) is None
-        with pytest.raises(ValueError, match="not supported"):
-            inference._dispatch_method_call(x_var, "missing", [])
-
-        list_var = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "items")
-        factory.add_variable(list_var)
-        native_call = inference._dispatch_method_call(list_var, "append", [ast.Constant(1)])
-        assert unparse(native_call.get()) == "items.append(1)"
-
-        def assignment_handler(inf, node, rhs):
-            if node.targets[0].id == "handled":
-                return AST.assignment("handled", ast.Constant(7))
-            return None
-
-        NumbaTypeInference.register_assignment_handler(assignment_handler)
-        assert unparse(inference.create_assignment_variable(parse_stmt("handled = x"), ast.Name(id="x", ctx=ast.Load()))) == "handled = 7"
-
-        created = inference.create_assignment_variable(parse_stmt("y = x.double()"), parse_expr("x.double()"))
-        assert unparse(created) == "y = x * 2"
-        existing = inference.create_assignment_variable(parse_stmt("y = x.double()"), parse_expr("x.double()"))
-        assert unparse(existing) == "y = x * 2"
-        simple = inference.create_assignment_variable(parse_stmt("z = x"), ast.Name(id="x", ctx=ast.Load()))
-        assert unparse(simple) == "z = x"
-        assert factory.from_name("z").type is int_type
-
-        method_source = VoidPtrSource(0, int_type, "method_source", "inputs", supported_methods=[Output], force_opaque=True)
-        factory.add_variable(method_source)
-        method_alias = inference.create_assignment_variable(parse_stmt("method_alias = method_source"), ast.Name(id="method_source", ctx=ast.Load()))
-        assert unparse(method_alias) == "method_alias = method_source[0]"
-        assert factory.from_name("method_alias") is method_source
-
-        opaque = LocalVariableSource(NumbaListType(ListTypeMarker(int), None), "opaque")
-        factory.add_variable(opaque)
-        alias_assign = inference.create_assignment_variable(parse_stmt("alias = opaque"), ast.Name(id="opaque", ctx=ast.Load()))
-        assert unparse(alias_assign) == "alias = opaque"
-        assert factory.from_name("alias") is opaque
-
-        lowered = inference.try_lower_assignment(parse_stmt("new_list = create_new_list(int)"), parse_expr("create_new_list(int)"))
-        assert len(lowered) == 2
-        assert factory.from_name("new_list") is not None
-
-        def bad_lowerer(node, globalns, variable_factory):
-            raise ValueError("skip")
-
-        def good_lowerer(node, globalns, variable_factory):
-            if isinstance(node, ast.Attribute):
-                return ast.Constant(11)
-            return None
-
-        NumbaTypeInference.register_attr_lowerer(bad_lowerer)
-        NumbaTypeInference.register_attr_lowerer(good_lowerer)
-        assert inference.try_attr_lowerers(parse_expr("Some.VALUE")).value == 11
-        assert inference.try_attr_lowerers(ast.Constant(1)) is None
-
-        out = OutputSource(0, int_type, "out")
-        assert unparse(out.call("output", None)) == "output_ticked[0] = 1"
-        assert out.call("missing") is None
+        source = VoidPtrSource(0, TypeFactory.get_type(int), "x", "inputs", supported_methods=[Output])
+        factory.add_variable(source)
+        converter = NumbaASTConverter(ast.parse("pass"), factory)
+        assert unparse(converter.visit(parse_expr("x.output()"))) == "output_ticked[0] = 1"
+        assert unparse(converter.visit(parse_stmt("x.output()"))) == "output_ticked[0] = 1"
+        assert unparse(converter.visit(parse_expr("x + 1"))) == "x[0] + 1"
+        assert unparse(converter.visit(parse_stmt("alias = x"))) == "alias = x[0]"
+        assert factory.from_source_name("alias") is None
