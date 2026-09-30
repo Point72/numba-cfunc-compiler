@@ -188,7 +188,13 @@ class NumbaASTConverter(ast.NodeTransformer):
             output_var = self.variable_factory.get_output_by_idx(i)
 
             # if we return None, do nothing
-            if isinstance(elt, ast.Name) and elt.id == "None":
+            if (isinstance(elt, ast.Name) and elt.id == "None") or (isinstance(elt, ast.Constant) and elt.value is None):
+                continue
+
+            if isinstance(output_var.type, StructType) and output_var.type.typed_view:
+                value = self.variable_factory.lower_value_expression(self, elt, statements)
+                statements.append(output_var.write(value))
+                statements.append(output_var.call("output", None))
                 continue
 
             # get or create a local variable for the return value
@@ -250,7 +256,7 @@ class NumbaASTConverter(ast.NodeTransformer):
             field_name = target.attr
             base_var = self.variable_factory.from_name(base_name)
 
-            if base_var is not None and isinstance(base_var.type, StructType):
+            if base_var is not None and isinstance(base_var.type, StructType) and not base_var.type.typed_view:
                 # Visit RHS first to transform any nested expressions
                 value_expr = self.visit(node.value)
                 # Generate struct_field_store call

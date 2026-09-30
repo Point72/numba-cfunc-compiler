@@ -11,9 +11,12 @@ Provides:
 
 import ast
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
+
+from numba import types
 
 from numba_cfunc_compiler.models import UnknownNumbaValue, VariableType
+from numba_cfunc_compiler.standalone.struct import StructField, StructLayout
 from numba_cfunc_compiler.type_factory import TypeFactory
 from numba_cfunc_compiler.utils.ast import AST
 
@@ -52,6 +55,34 @@ class StructType(VariableType):
 
     fields: dict[str, StructFieldInfo] = None
     size: int = 0
+    typed_view: ClassVar[bool] = False
+
+    def get_typed_layout(self) -> StructLayout:
+        """Validate host metadata for the opt-in Numba struct view."""
+        if not self.typed_view:
+            raise TypeError(f"{type(self).__name__} has not enabled typed views")
+        if self.fields is None:
+            raise TypeError("StructType has no field metadata")
+        if not isinstance(self.value, type):
+            raise TypeError("Typed struct views require a Python struct type")
+        numeric_types = {
+            name: getattr(types, name) for name in ("int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64", "float32", "float64")
+        }
+        fields = []
+        for name, field in sorted(self.fields.items(), key=lambda item: (item[1].offset, item[0])):
+            if name != field.name:
+                raise ValueError(f"Struct field key '{name}' does not match metadata name '{field.name}'")
+            if field.numba_type_name == "voidptr":
+                continue
+            numba_type = numeric_types.get(field.numba_type_name)
+            if numba_type is None:
+                raise TypeError(f"Struct field '{name}' has unsupported typed-view type '{field.numba_type_name}'")
+            typed_field = StructField(name, field.offset, numba_type)
+            if field.size != typed_field.size:
+                raise ValueError(f"Struct field '{name}' declares {field.size} bytes, expected {typed_field.size}")
+            fields.append(typed_field)
+        name = f"{self.value.__module__}.{self.value.__qualname__}"
+        return StructLayout(name, self.size, tuple(fields))
 
     def get_numba_type_name(self) -> str:
         return "voidptr"
@@ -161,7 +192,7 @@ def struct_attribute_transformer(node: ast.AST, globalns: dict, variable_factory
         base_name = node.value.id
         base_var = variable_factory.from_name(base_name)
 
-        if base_var is None or not is_struct_type(base_var.type):
+        if base_var is None or not is_struct_type(base_var.type) or base_var.type.typed_view:
             return None
 
         try:
@@ -180,7 +211,7 @@ def struct_attribute_transformer(node: ast.AST, globalns: dict, variable_factory
             return None
 
         element_type = getattr(container_var, "element_type", None)
-        if element_type is None or not is_struct_type(element_type):
+        if element_type is None or not is_struct_type(element_type) or element_type.typed_view:
             return None
 
         # Create a dynamic access for the indexed element
@@ -210,7 +241,7 @@ def struct_attr_handler(
     """Type inference handler for struct field access."""
     from numba_cfunc_compiler.variable_factory import ExpressionSource
 
-    if not is_struct_type(base_var.type):
+    if not is_struct_type(base_var.type) or base_var.type.typed_view:
         return None
 
     struct_class = base_var.type.value
@@ -246,3 +277,4 @@ def register():
     from numba_cfunc_compiler.numba_type_inference import NumbaTypeInference
 
     NumbaTypeInference.register_attr_accessor(struct_attr_handler)
+    NumbaTypeInference.register_attr_lowerer(struct_attribute_transformer)

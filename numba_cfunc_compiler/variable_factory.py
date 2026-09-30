@@ -130,6 +130,11 @@ class VoidPtrSource(VariableSource):
             return self.type.read(self.local_variable_name(), self.name, loaded_value)
         # Allow types to prepare themselves before reading
         self.type = self.type.prepare_voidptr_read(self)
+        from numba_cfunc_compiler.defaults.struct_support import StructType
+
+        if isinstance(self.type, StructType) and self.type.typed_view and not isinstance(self, OutputSource):
+            view_name = self.variable_factory.bind_struct_view(self.type)
+            return AST.assignment(self.local_variable_name(), AST.function_call(view_name, loaded_value))
         value = AST.cast_from_voidptr(loaded_value, self.type.get_numba_type_name())
         return AST.assignment(self.local_variable_name(), value)
 
@@ -167,6 +172,17 @@ class OutputSource(VoidPtrSource):
         from numba_cfunc_compiler.defaults.struct_support import StructType
 
         if isinstance(self.type, StructType):
+            if self.type.typed_view:
+                # The layout-bound intrinsic checks the expression's Numba type.
+                # An AST-inferred value_type may be unknown for helper calls,
+                # conditional expressions, and other valid struct values.
+                output_size = self.type.get_size()
+                if output_size <= 0:
+                    raise TypeError(f"Struct output {self.type.value} has invalid size {output_size}")
+                copy_name = self.variable_factory.bind_struct_copy(self.type)
+                copy_call = AST.function_call(copy_name, ast.Name(id=self.local_variable_name(), ctx=ast.Load()), value)
+                return ast.Expr(value=copy_call)
+
             if not isinstance(value_type, StructType):
                 actual_type = getattr(value_type, "value", value_type)
                 raise TypeError(f"Return value at position {self.array_idx} has type {actual_type}, expected struct {self.type.value}")
@@ -285,6 +301,23 @@ class VariableFactory:
         self.variable_name_map = {}
         self.temporary_variable_counter = 0
         self.ast_converter = None
+        self.typed_struct_bindings = {}
+        self.typed_struct_layouts = {}
+
+    def _bind_struct(self, struct_type, operation: str) -> str:
+        from numba_cfunc_compiler.standalone.struct import struct_copy, struct_view
+
+        layout = struct_type.get_typed_layout()
+        name = f"_typed_struct_{operation}_{layout.fingerprint}"
+        self.typed_struct_bindings[name] = struct_view(layout) if operation == "view" else struct_copy(layout)
+        self.typed_struct_layouts[layout.fingerprint] = layout
+        return name
+
+    def bind_struct_view(self, struct_type) -> str:
+        return self._bind_struct(struct_type, "view")
+
+    def bind_struct_copy(self, struct_type) -> str:
+        return self._bind_struct(struct_type, "copy")
 
     def add_variable(self, variable: VariableSource, category: Any = None):
         if variable.name in self.variable_name_map:
@@ -350,6 +383,23 @@ class VariableFactory:
         var = LocalVariableSource(var_type, name)
         self.add_variable(var)
         return var
+
+    def lower_value_expression(self, visitor, ast_node: ast.AST, statements: list[ast.stmt]) -> ast.AST:
+        """Lower an expression without recording an inferred Python-side type.
+
+        Keyed source access still needs source lookup. Ordinary locals and
+        expressions are left for Numba to type in the generated function.
+        """
+        if isinstance(ast_node, ast.Subscript) and isinstance(ast_node.value, ast.Name):
+            container = self.from_name(ast_node.value.id)
+            if hasattr(container, "key_to_child_name") and hasattr(container, "create_dynamic_access"):
+                return self._handle_container_subscript(visitor, container, ast_node.slice).get()
+
+        value = visitor.visit(ast_node)
+        if isinstance(value, list):
+            statements.extend(value[:-1])
+            return value[-1]
+        return value
 
     def _get_static_key(self, key_node) -> Any:
         """Extract a static key value from an AST node, or return None if dynamic."""

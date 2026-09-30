@@ -100,12 +100,17 @@ class AST:
         idx = output_var.array_idx
 
         statements: list[ast.stmt] = []
-        # Lower the value expression into a local variable if needed, using factory helpers
-        var = variable_factory.from_ast(visitor=visitor, ast_node=value_node, statements=statements)
-        value_expr = var.get()
+        from numba_cfunc_compiler.defaults.struct_support import StructType
 
-        # Write the value and mark the output as ticked
-        statements.append(output_var.write(value_expr, var.type))
+        if isinstance(output_var.type, StructType) and output_var.type.typed_view:
+            value_expr = variable_factory.lower_value_expression(visitor, value_node, statements)
+            statements.append(output_var.write(value_expr))
+        else:
+            # Legacy sources still use their Python-side type metadata.
+            var = variable_factory.from_ast(visitor=visitor, ast_node=value_node, statements=statements)
+            statements.append(output_var.write(var.get(), var.type))
+
+        # Mark the output as ticked after its value is written.
         tick_lhs = AST.array_access(TICKED_OUTPUTS_ARRAY_NAME, idx)
         statements.append(AST.assignment(tick_lhs, ast.Constant(1)))
         return statements

@@ -35,6 +35,7 @@ from numba_cfunc_compiler.standalone.list import (
     standalone_list_new,
     standalone_list_to_voidptr,
 )
+from numba_cfunc_compiler.standalone.struct import LOWERING_VERSION
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.enum import make_enum
 from numba_cfunc_compiler.utils.enumset import make_enumset
@@ -87,12 +88,18 @@ def _build_semantic_key(
     new_func_code: str,
     cfunc_sig: str,
     cfunc_kwargs: str,
+    typed_struct_layouts: dict | None = None,
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
         "cfunc_sig": cfunc_sig,
         "cfunc_kwargs": cfunc_kwargs,
     }
+    if typed_struct_layouts:
+        payload["typed_structs"] = {
+            "lowering_version": LOWERING_VERSION,
+            "layouts": [layout.key for _, layout in sorted(typed_struct_layouts.items())],
+        }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -239,7 +246,7 @@ def create_compiled_func(
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
-    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs)
+    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs, variable_factory.typed_struct_layouts)
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
 {new_func_code}
@@ -287,6 +294,7 @@ def create_compiled_func(
             "_standalone_dict_iter_next_key": _standalone_dict_iter_next_key,
         }
     )
+    exec_globals.update(variable_factory.typed_struct_bindings)
     exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
 
     compiled_func = exec_globals[name]

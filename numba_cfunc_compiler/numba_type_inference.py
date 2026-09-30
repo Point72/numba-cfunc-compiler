@@ -150,6 +150,13 @@ class NumbaTypeInference:
         else:
             return None
 
+        # A typed struct is already a Numba value. Leave its attributes and
+        # methods intact so Numba can type overloads and helper expressions.
+        from numba_cfunc_compiler.defaults.struct_support import StructType
+
+        if isinstance(getattr(current_var, "type", None), StructType) and current_var.type.typed_view:
+            return None
+
         # Walk forward through the chain
         for op_kind, name, args in chain:
             if current_var is None:
@@ -247,6 +254,13 @@ class NumbaTypeInference:
         if existing_var is not None:
             # Assigning to existing variable
             return AST.assignment(existing_var.get(), src_value)
+
+        from numba_cfunc_compiler.defaults.struct_support import StructType
+
+        if isinstance(src_var.type, StructType) and src_var.type.typed_view:
+            # A local alias is an ordinary Numba variable. Keeping it in the
+            # source map would make later uses resolve back to the old source.
+            return AST.assignment(target_name, src_value)
 
         # Creating new variable
         if src_var.is_opaque_pointer():

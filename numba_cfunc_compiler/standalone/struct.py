@@ -1,7 +1,7 @@
 """Borrowed, layout-specific views of host-owned structs in Numba code.
 
-This module is an isolated prototype. The node AST converter does not use it
-yet; callers explicitly construct a typed view from a ``voidptr``.
+Opted-in ``StructType`` registrations use these views at node source reads.
+Direct callers can also construct a typed view from a ``voidptr``.
 """
 
 import hashlib
@@ -11,10 +11,13 @@ from functools import cache
 
 from llvmlite import ir
 from numba import types
+from numba.core import cgutils
 from numba.core.typing.templates import AttributeTemplate
 from numba.extending import infer_getattr, intrinsic, lower_getattr_generic, lower_setattr_generic, models, register_model
 
-__all__ = ["StructField", "StructLayout", "StructPtrType", "struct_ptr_type", "struct_view"]
+__all__ = ["StructField", "StructLayout", "StructPtrType", "struct_copy", "struct_ptr_type", "struct_view"]
+
+LOWERING_VERSION = 1
 
 
 _FIELD_SIZES = {
@@ -142,6 +145,26 @@ def struct_view(layout: StructLayout):
         return sig, codegen
 
     return view
+
+
+@cache
+def struct_copy(layout: StructLayout):
+    """Copy a matching borrowed view into host-owned output storage."""
+    source_type = struct_ptr_type(layout)
+
+    @intrinsic
+    def copy(typingctx, dst, src):
+        if dst != types.voidptr or src != source_type:
+            return None
+        sig = types.void(dst, src)
+
+        def codegen(context, builder, signature, args):
+            cgutils.memcpy(builder, args[0], args[1], context.get_constant(types.intp, layout.size))
+            return context.get_dummy_value()
+
+        return sig, codegen
+
+    return copy
 
 
 @infer_getattr

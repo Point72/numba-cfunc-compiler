@@ -704,6 +704,7 @@ def test_variable_sources():
         factory.add_variable(child)
         factory.variable_name_map["bag"] = FakeContainer()
         assert factory.from_ast(None, parse_expr("bag['a']"), []) is child
+        assert unparse(factory.lower_value_expression(None, parse_expr("bag['a']"), [])) == "child"
         assert factory.from_ast(None, parse_expr("bag[0]"), []) is child
         with pytest.raises(KeyError, match="no key"):
             factory.from_ast(None, parse_expr("bag['missing']"), [])
