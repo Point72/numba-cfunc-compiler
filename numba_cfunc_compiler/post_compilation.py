@@ -34,7 +34,7 @@ def apply_post_compilation(
 ) -> tuple[str, str]:
     ir_text = compiled_func._library.get_llvm_str()
     raw_native_name = compiled_func.native_name
-    exported_entry_point = f"_gc_numba_{semantic_key}"
+    exported_entry_point = f"_ncc_numba_{semantic_key}"
 
     if opts.force_inline:
         ir_text = LLVMIRHelper.force_inline(ir_text)

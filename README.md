@@ -49,7 +49,7 @@ with CompilationContext() as ctx:
         options=CompilationOptions(fastmath=True, force_inline=True),
     )
     # result.compiled_func        — the Numba cfunc
-    # result.native_name          — exported entry-point name (_gc_numba_<semantic_key>)
+    # result.native_name          — exported entry-point name (_ncc_numba_<semantic_key>)
     # result.semantic_key         — deterministic hash of transformed code + cfunc signature/options
     # result.llvm_ir              — final LLVM IR after exported-symbol rewrite and optional transforms
     # result.output_types / .named_outputs
@@ -336,7 +336,7 @@ result = create_compiled_func(func, *args, options=opts, ...)
 
 **`force_inline`** *(post-compilation)* — Replaces Numba's `noinline` attribute on the cfunc wrapper with `alwaysinline`, letting the LLVM optimizer inline the function body into the wrapper and eliminate the extra call.
 
-Regardless of options, the exported wrapper symbol is renamed to `_gc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
+Regardless of options, the exported wrapper symbol is renamed to `_ncc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
 
 ### FFI Optimization
 

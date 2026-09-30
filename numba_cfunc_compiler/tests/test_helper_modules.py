@@ -145,8 +145,8 @@ def test_post_compilation(caplog):
         _library = Library()
 
     ir_text, exported = apply_post_compilation(CompiledFunc(), "abc123", CompilationOptions(force_inline=True))
-    assert exported == "_gc_numba_abc123"
-    assert "@_gc_numba_abc123" in ir_text
+    assert exported == "_ncc_numba_abc123"
+    assert "@_ncc_numba_abc123" in ir_text
     assert "alwaysinline" in ir_text
     assert "define internal void @helper()" in ir_text
 
