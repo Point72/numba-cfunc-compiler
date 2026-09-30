@@ -286,7 +286,7 @@ class ContainerType(VariableType):
         statements: list[ast.stmt] = []
         for v in standalone_state_vars:
             state_slot = AST.array_access(state_array_name, v.array_idx)
-            loaded_name = f"_gc_standalone_loaded_{v.array_idx}"
+            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
             statements.extend(v.type.init_statements(v.name, loaded_name, state_slot))
         return statements
 
@@ -297,7 +297,7 @@ class ContainerType(VariableType):
             return []
         statements: list[ast.stmt] = []
         for v in standalone_state_vars:
-            loaded_name = f"_gc_standalone_loaded_{v.array_idx}"
+            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
             state_slot = AST.array_access(state_array_name, v.array_idx)
             statements.append(AST.assignment(loaded_name, state_slot))
             statements.extend(

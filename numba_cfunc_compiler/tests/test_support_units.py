@@ -86,7 +86,7 @@ def unparse(node: ast.AST) -> str:
     return ast.unparse(node)
 
 
-def test_time_type_lowering():
+def test_datetime_timedelta():
     aware = datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     delta = timedelta(days=1, seconds=2, microseconds=3)
 
@@ -156,7 +156,7 @@ def test_time_literals():
         TypeHelper.lower_time_constructor(parse_expr("datetime(2020, 1, 1)"))
 
 
-def test_list_support():
+def test_list_type():
     with default_context():
         marker = ListTypeMarker(int)
         list_type = NumbaListType(marker, [1, 2])
@@ -227,7 +227,7 @@ def test_list_support():
             NumbaListType.validate_input("values", [1, 2.0], marker)
 
 
-def test_dict_support():
+def test_dict_type():
     with default_context():
         marker = DictTypeMarker(int, float)
         dict_type = NumbaDictType(marker, {1: 2.5})
@@ -615,7 +615,7 @@ def test_ast_utilities():
             AST.set_output(factory, None, ast.Constant("not_output"), ast.Constant(5))
 
 
-def test_variable_factory():
+def test_variable_sources():
     with default_context():
         int_type = TypeFactory.get_type(int, 1)
         source = VariableSource(int_type, "x")
