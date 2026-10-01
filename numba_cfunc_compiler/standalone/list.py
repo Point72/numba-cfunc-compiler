@@ -334,6 +334,33 @@ def standalone_list_resize(typingctx, lst_ty, newsize_ty):
 
 
 @intrinsic
+def standalone_list_reset_size(typingctx, lst_ty, newsize_ty):
+    """Set a POD list's length, growing its buffer only when necessary."""
+    if isinstance(lst_ty, StandaloneListType) and isinstance(newsize_ty, types.Integer):
+        sig = types.int32(lst_ty, newsize_ty)
+
+        def codegen(context, builder, signature, args):
+            lst_ptr, newsize = args
+            newsize = convert_to_i64(builder, newsize)
+            fnty = ir.FunctionType(i64(), [i8ptr()])
+            allocated_fn = get_or_declare_function(builder.module, "numba_list_allocated", fnty)
+            allocated = builder.call(allocated_fn, [lst_ptr])
+            status = builder.alloca(i32())
+            builder.store(ir.Constant(i32(), 0), status)
+            with builder.if_else(builder.icmp_signed(">", newsize, allocated)) as (grow, reuse):
+                with grow:
+                    resize_fn = get_or_declare_function(builder.module, "numba_list_resize", ir.FunctionType(i32(), [i8ptr(), i64()]))
+                    builder.store(builder.call(resize_fn, [lst_ptr, newsize]), status)
+                with reuse:
+                    size_fn = get_or_declare_function(builder.module, "numba_list_size_address", fnty)
+                    size_address = builder.call(size_fn, [lst_ptr])
+                    builder.store(newsize, builder.inttoptr(size_address, i64().as_pointer()))
+            return builder.load(status)
+
+        return sig, codegen
+
+
+@intrinsic
 def _normalize_index(typingctx, index_ty, length_ty):
     """
     Normalize a potentially negative index to a positive one.

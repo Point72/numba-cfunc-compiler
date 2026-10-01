@@ -13,8 +13,7 @@ class ConstantCategory(SourceCategory):
 
     id = SourceCategoryId.CONSTANT
     order = -4
-    # Constants must be materialized before lifecycle branching so opaque
-    # constants like standalone lists/dicts are available in start/stop too.
+    # Constants must be materialized before lifecycle branching so they are available in start/stop too.
     init_filter = SourceInitFilter.EVERYTIME
 
     @property
@@ -31,6 +30,25 @@ class ConstantCategory(SourceCategory):
                 ConstantSource(var_type, name),
                 category=SourceCategoryId.CONSTANT,
             )
+
+
+class ConstantContainerCategory(SourceCategory):
+    """Constant containers backed by compiler-owned state slots."""
+
+    id = SourceCategoryId.CONSTANT_CONTAINER
+    order = -5
+    init_filter = SourceInitFilter.EVERYTIME
+
+    def create_variables(self, info, factory):
+        from numba_cfunc_compiler.models import CONTAINER_STATE_INIT
+        from numba_cfunc_compiler.type_factory import TypeFactory
+        from numba_cfunc_compiler.variable_factory import VoidPtrSource
+
+        for name, (value, param_info) in info.input_analysis.get_params_by_category("constant_container").items():
+            var_type = TypeFactory.get_type(param_info.expected_type, value)
+            var = VoidPtrSource(array_idx=len(info.state_slots), type=var_type, name=name, storage_location=STATE_ARRAY_NAME)
+            info.state_slots.append((CONTAINER_STATE_INIT, var_type))
+            factory.add_variable(var, category=SourceCategoryId.CONSTANT_CONTAINER)
 
 
 class OutputCategory(SourceCategory):
@@ -80,36 +98,19 @@ class StateCategory(SourceCategory):
         ]
 
     def create_variables(self, info, factory):
-        from numba_cfunc_compiler.defaults.struct_support import StructType
-        from numba_cfunc_compiler.models import ContainerType
         from numba_cfunc_compiler.type_factory import TypeFactory
         from numba_cfunc_compiler.variable_factory import VoidPtrSource
 
-        info.nrt_state_indices = []
-        info.struct_state_indices = []
-        info.struct_state_sizes = []
-        for idx, state_var in enumerate(info.state_analysis.sorted_by_size()):
+        for state_var in info.state_analysis.sorted_by_size():
             var_type = TypeFactory.get_type(state_var.state_type)
             var = VoidPtrSource(
-                array_idx=idx,
+                array_idx=len(info.state_slots),
                 type=var_type,
                 name=state_var.name,
                 storage_location=STATE_ARRAY_NAME,
             )
+            info.state_slots.append((state_var.initial_value, var_type))
             factory.add_variable(var, category=SourceCategoryId.STATE)
-            if isinstance(var_type, ContainerType):
-                info.nrt_state_indices.append(idx)
-            elif isinstance(var_type, StructType):
-                info.struct_state_indices.append(idx)
-                info.struct_state_sizes.append(var_type.get_size())
-
-    def get_result_metadata(self, info):
-        return {
-            "state_values": tuple(sv.initial_value for sv in info.state_analysis.sorted_by_size()),
-            "nrt_state_indices": tuple(info.nrt_state_indices),
-            "struct_state_indices": tuple(info.struct_state_indices),
-            "struct_state_sizes": tuple(info.struct_state_sizes),
-        }
 
 
 class LifecycleCategory(SourceCategory):
@@ -130,6 +131,7 @@ class LifecycleCategory(SourceCategory):
 
 
 def register_default_categories() -> None:
+    SourceRegistry.register(ConstantContainerCategory())
     SourceRegistry.register(ConstantCategory())
     SourceRegistry.register(OutputCategory())
     SourceRegistry.register(StateCategory())

@@ -846,14 +846,18 @@ int numba_dict_popitem(NB_Dict* d, char* key_bytes, char* val_bytes) {
 }
 
 int numba_dict_clear(NB_Dict* d) {
-  STACK_ALLOC(char, key_buf, d->keys->key_size);
-  STACK_ALLOC(char, val_buf, d->keys->val_size);
-  while(d->used > 0) {
-    int status = numba_dict_popitem(d, key_buf, val_buf);
-    if(status != OK) {
-      return status;
+  NB_DictKeys* dk = d->keys;
+  for(Py_ssize_t i = 0; i < dk->nentries; ++i) {
+    NB_DictEntry* ep = get_entry(dk, i);
+    if(ep->hash != DKIX_EMPTY) {
+      dk_decref_key(dk, entry_get_key(dk, ep));
+      dk_decref_val(dk, entry_get_val(dk, ep));
     }
   }
+  d->used      = 0;
+  dk->usable   = USABLE_FRACTION(dk->size);
+  dk->nentries = 0;
+  memset(dk->indices, 0xff, dk->entry_offset + dk->entry_size * dk->usable);
   return OK;
 }
 

@@ -216,7 +216,7 @@ def test_list_type():
 
         param = inspect.signature(accepts_list).parameters["values"]
         info = NumbaListType.try_parse_input(param, param.annotation)
-        assert info == ParameterInfo(expected_type=marker)
+        assert info == ParameterInfo(expected_type=marker, category="constant_container")
         assert NumbaListType.try_parse_input(param, int) is None
         assert NumbaListType.validate_input("values", (1, 2), marker) == [1, 2]
         with pytest.raises(TypeError, match="Expected ListTypeMarker"):
@@ -286,7 +286,7 @@ def test_dict_type():
 
         param = inspect.signature(accepts_dict).parameters["values"]
         info = NumbaDictType.try_parse_input(param, param.annotation)
-        assert info == ParameterInfo(expected_type=marker)
+        assert info == ParameterInfo(expected_type=marker, category="constant_container")
         assert NumbaDictType.try_parse_input(param, int) is None
         assert NumbaDictType.validate_input("values", {1: 2.0}, marker) == {1: 2.0}
         with pytest.raises(TypeError, match="Expected DictTypeMarker"):

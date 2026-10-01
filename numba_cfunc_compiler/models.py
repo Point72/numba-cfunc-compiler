@@ -271,6 +271,12 @@ class ContainerType(VariableType):
     def create_new_container(self, var_name: str) -> list[ast.AST]:
         raise NotImplementedError
 
+    def populate_constant(self, var_name: str) -> list[ast.stmt]:
+        raise NotImplementedError
+
+    def reset_constant(self, var_name: str) -> list[ast.stmt]:
+        raise NotImplementedError
+
     def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST) -> ast.AST:
         raise NotImplementedError
 
@@ -312,7 +318,8 @@ class ContainerType(VariableType):
     @staticmethod
     def emit_container_state_free(standalone_state_vars, state_array_name: str = STATE_ARRAY_NAME) -> list[ast.stmt]:
         """Free state containers and clear their host state slots on STOP."""
-        statements: list[ast.stmt] = []
+        # STOP code may rebind locals; reload the allocations owned by the slots.
+        statements = ContainerType.emit_container_state_load(standalone_state_vars, state_array_name)
         for v in standalone_state_vars:
             statements.append(
                 ast.Expr(

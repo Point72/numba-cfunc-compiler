@@ -73,14 +73,13 @@ class NumbaListType(ContainerType):
 
     def read_constant(self, local_var_name: str):
         """Create a standalone list and populate it with constant values."""
-        values = list(self.runtime_value)
         if not isinstance(self.value, ListTypeMarker):
             raise TypeError(f"Expected ListTypeMarker, got {type(self.value)}")
+        return self.create_new_container(local_var_name) + self.populate_constant(local_var_name)
 
-        # Create the list using the type's create_new_container method
-        stmts = self.create_new_container(local_var_name)
-
-        # Append each value
+    def populate_constant(self, local_var_name: str) -> list[ast.stmt]:
+        values = list(self.runtime_value)
+        stmts = []
         for v in values:
             stmts.append(
                 ast.Expr(
@@ -95,8 +94,19 @@ class NumbaListType(ContainerType):
                     )
                 )
             )
-
         return stmts
+
+    def reset_constant(self, local_var_name: str) -> list[ast.stmt]:
+        return [
+            ast.Expr(
+                value=AST.function_call(
+                    "standalone_list_reset_size",
+                    ast.Name(id=local_var_name, ctx=ast.Load()),
+                    ast.Constant(value=len(self.runtime_value)),
+                )
+            ),
+            *(AST.assignment(AST.array_access(local_var_name, i), ast.Constant(value=v)) for i, v in enumerate(self.runtime_value)),
+        ]
 
     @classmethod
     def is_type_supported(cls, var_type: Any) -> bool:
@@ -181,7 +191,7 @@ class NumbaListType(ContainerType):
         if elem_type not in allowed:
             raise TypeError(f"Unsupported NumbaList element type: {elem_type}. Supported: {[t.__name__ for t in allowed]}")
 
-        return ParameterInfo(expected_type=ListTypeMarker(elem_type))  # defaults to category="constant"
+        return ParameterInfo(expected_type=ListTypeMarker(elem_type), category="constant_container")
 
     @classmethod
     def validate_input(cls, param_name: str, value: Any, expected_type: Any) -> Any:

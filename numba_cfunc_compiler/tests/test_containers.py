@@ -72,6 +72,23 @@ def list_append_last(x: Signal[int]) -> Signal[int]:
     return xs[len(xs) - 1]
 
 
+@numba_node
+def mutate_constant_containers(x: Signal[int], values: NumbaList[int], mapping: NumbaDict[int, int]) -> Signal[int]:
+    result = values[0] * 1_000 + len(values) * 100 + mapping.get(1, -1) * 10 + len(mapping)
+    values[0] = x
+    values.append(x)
+    mapping[1] = x
+    mapping[x] = x
+    return result
+
+
+@numba_node
+def constant_container_and_state(x: Signal[int], values: NumbaList[int]) -> Signal[int]:
+    total: State[int] = 0
+    total += x
+    return values[0] + total
+
+
 class TestDictExecution(unittest.TestCase):
     def test_set_get_int(self):
         node = CompiledNode(compile_function(dict_set_get), input_types=[int, int]).start()
@@ -129,6 +146,60 @@ class TestListExecution(unittest.TestCase):
         node.execute([10])
         node.stop()
         self.assertIsNone(node._state[0])
+
+    def test_constant_containers_reuse_storage_and_reset_values(self):
+        import ctypes
+
+        # Test-only mirrors of the C runtime structs, used to inspect their backing-storage pointers.
+        class NBList(ctypes.Structure):
+            _fields_ = [
+                ("size", ctypes.c_ssize_t),
+                ("item_size", ctypes.c_ssize_t),
+                ("allocated", ctypes.c_ssize_t),
+                ("is_mutable", ctypes.c_int),
+                ("item_incref", ctypes.c_void_p),
+                ("item_decref", ctypes.c_void_p),
+                ("items", ctypes.c_void_p),
+            ]
+
+        class NBDict(ctypes.Structure):
+            _fields_ = [
+                ("used", ctypes.c_ssize_t),
+                ("keys", ctypes.c_void_p),
+            ]
+
+        result = compile_function(
+            mutate_constant_containers,
+            values=[7, 8],
+            mapping={1: 5},
+        )
+        self.assertEqual(result.state_values, (0, 0))
+        self.assertEqual(result.nrt_state_indices, (0, 1))
+
+        node = CompiledNode(result, input_types=[int]).start()
+        container_ptrs = tuple(node._state)
+        self.assertTrue(all(container_ptrs))
+        list_items = NBList.from_address(container_ptrs[0]).items
+        dict_keys = NBDict.from_address(container_ptrs[1]).keys
+
+        for x in range(2, 34):
+            self.assertEqual(node.execute([x]), (7_251, True))
+            self.assertEqual(tuple(node._state), container_ptrs)
+            self.assertEqual(NBList.from_address(container_ptrs[0]).items, list_items)
+            self.assertEqual(NBDict.from_address(container_ptrs[1]).keys, dict_keys)
+
+        node.stop()
+        self.assertEqual(tuple(node._state), (None, None))
+
+    def test_constant_container_and_declared_state_use_distinct_slots(self):
+        result = compile_function(constant_container_and_state, values=[7])
+        self.assertEqual(result.state_values, (0, 0))
+        self.assertEqual(len(result.nrt_state_indices), 1)
+
+        node = CompiledNode(result, input_types=[int]).start()
+        self.assertEqual(node.execute([1])[0], 8)
+        self.assertEqual(node.execute([2])[0], 10)
+        node.stop()
 
 
 if __name__ == "__main__":
