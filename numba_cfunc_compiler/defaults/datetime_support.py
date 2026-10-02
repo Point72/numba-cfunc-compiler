@@ -21,6 +21,11 @@ class DateTimeType(VariableType):
     def get_numba_type_name(self) -> str:
         return "int64"
 
+    def get_state_payload(self):
+        from numba_cfunc_compiler.state_values import copy_state_payload
+
+        return copy_state_payload(("datetime", "datetime"), numba_types.int64, numba_types.int64, 8, 8)
+
     @staticmethod
     def to_nanos(val: _PyDatetime) -> int:
         """Convert datetime to nanoseconds since epoch (must be timezone-aware)."""

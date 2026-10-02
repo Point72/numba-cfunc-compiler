@@ -25,6 +25,13 @@ class NumbaListType(ContainerType):
     def get_numba_type_name(self) -> str:
         return "voidptr"
 
+    def get_state_payload(self):
+        from numba_cfunc_compiler.standalone.list import StandaloneListType
+        from numba_cfunc_compiler.state_values import borrowed_container_payload
+
+        dtype = NumbaTypeRegistry.resolve_to_numba_type(self.value.element_type)
+        return borrowed_container_payload("NumbaList", StandaloneListType(dtype), ("list", dtype.name))
+
     def _to_voidptr_func_name(self) -> str:
         return "standalone_list_to_voidptr"
 

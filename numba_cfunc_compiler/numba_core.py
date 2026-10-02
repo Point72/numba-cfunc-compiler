@@ -2,6 +2,7 @@ import ast
 import hashlib
 import inspect
 import json
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -34,6 +35,8 @@ from numba_cfunc_compiler.standalone.list import (
 )
 from numba_cfunc_compiler.standalone.primitive import OUTPUT_STORE_VERSION, primitive_output_store
 from numba_cfunc_compiler.standalone.struct import LOWERING_VERSION
+from numba_cfunc_compiler.state_assignment import PIPELINE_VERSION, STABLE_LOCAL_POLICY_VERSION, StateBinding, make_state_pipeline
+from numba_cfunc_compiler.state_values import LOWERING_VERSION as STATE_LOWERING_VERSION
 from numba_cfunc_compiler.utils.ast import AST
 from numba_cfunc_compiler.utils.enum import make_enum
 from numba_cfunc_compiler.utils.enumset import make_enumset
@@ -87,6 +90,7 @@ def _build_semantic_key(
     cfunc_kwargs: str,
     typed_struct_layouts: dict | None = None,
     uses_primitive_output_store: bool = False,
+    state_bindings_key: tuple = (),
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
@@ -100,6 +104,13 @@ def _build_semantic_key(
         }
     if uses_primitive_output_store:
         payload["primitive_output_store_version"] = OUTPUT_STORE_VERSION
+    payload["state_bindings"] = {"version": STATE_LOWERING_VERSION, "bindings": state_bindings_key}
+    payload["compiler_pipeline"] = {
+        "version": PIPELINE_VERSION,
+        "stable_local_policy": STABLE_LOCAL_POLICY_VERSION,
+        "numba": numba.__version__,
+        "python": sys.version_info[:2],
+    }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -229,6 +240,35 @@ def create_compiled_func(
     name = info.name
     variable_factory = info.variable_factory
 
+    from numba_cfunc_compiler.source_registry import SourceCategoryId
+
+    reserved_names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    reserved_names.update(param.name for param in SourceRegistry.build_cfunc_params())
+    reserved_names.update(variable_factory.source_name_map)
+    for body in (start_body or [], stop_body or []):
+        reserved_names.update(node.id for stmt in body for node in ast.walk(stmt) if isinstance(node, ast.Name))
+    state_vars = variable_factory.get_by_category(SourceCategoryId.STATE)
+    source_names = frozenset(variable_factory.source_name_map)
+    user_local_names = tuple(
+        sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)} - source_names)
+    )
+    state_bindings = tuple(StateBinding(var.name, f"__ncc_state_slot_{var.name}", var.type.get_state_payload()) for var in state_vars)
+    for binding in state_bindings:
+        generated = (
+            binding.slot_name,
+            f"__ncc_bind_state_{binding.name}",
+            f"__ncc_state_init_{binding.name}",
+            f"__ncc_state_init_{binding.name}_ptr",
+            f"__ncc_state_loaded_{binding.name}",
+            f"__ncc_state_value_{binding.name}",
+        )
+        for generated_name in generated:
+            if generated_name in reserved_names:
+                raise ValueError(f"Generated state name '{generated_name}' collides with a node name")
+            reserved_names.add(generated_name)
+    state_binding_map = {binding.name: binding for binding in state_bindings}
+    state_bindings_key = tuple((var.name, var.array_idx, state_binding_map[var.name].payload.key) for var in state_vars)
+
     # Lazy-load the NRT C library on first compilation
     CompilationContext.current().ensure_nrt_loaded()
 
@@ -238,6 +278,7 @@ def create_compiled_func(
         start_body=start_body,
         stop_body=stop_body,
         call_globals=call_globals,
+        state_bindings=state_binding_map,
     )
     new_tree = transformer.visit(tree)
     new_func_code = ast.unparse(new_tree)
@@ -246,6 +287,7 @@ def create_compiled_func(
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
+    cfunc_kwargs += ", pipeline_class=_state_pipeline"
     from numba_cfunc_compiler.defaults.primitive_support import PrimitiveType
     from numba_cfunc_compiler.variable_factory import OutputSource
 
@@ -256,6 +298,7 @@ def create_compiled_func(
         cfunc_kwargs,
         variable_factory.typed_struct_layouts,
         uses_primitive_output_store,
+        state_bindings_key,
     )
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
@@ -299,6 +342,9 @@ def create_compiled_func(
         }
     )
     exec_globals.update(variable_factory.typed_struct_bindings)
+    exec_globals["_state_pipeline"] = make_state_pipeline(state_bindings, user_local_names)
+    exec_globals.update({f"__ncc_bind_state_{binding.name}": binding.bind_function for binding in state_bindings})
+    exec_globals.update({f"_state_store_{binding.name}": binding.store_function for binding in state_bindings})
     exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
 
     compiled_func = exec_globals[name]

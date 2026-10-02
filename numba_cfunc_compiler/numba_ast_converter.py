@@ -45,6 +45,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         start_body: list[ast.AST] | None = None,
         stop_body: list[ast.AST] | None = None,
         call_globals: dict | None = None,
+        state_bindings: dict | None = None,
     ):
         self.tree = tree
         self.variable_factory = variable_factory
@@ -52,6 +53,58 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.call_globals = call_globals or {}
         self.start_body = start_body or []
         self.stop_body = stop_body or []
+        self.state_bindings = state_bindings or {}
+        for body in (tree, *self.start_body, *self.stop_body):
+            self._validate_state_binding_forms(body)
+
+    def _validate_state_binding_forms(self, tree):
+        """Reject bindings whose lexical scope is not a node-body local."""
+        state_names = self.state_bindings.keys()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Lambda):
+                raise TypeError(f"Lambda expressions in nodes are unsupported at line {node.lineno}")
+            if isinstance(node, ast.comprehension):
+                targets = {name.id for name in ast.walk(node.target) if isinstance(name, ast.Name)}
+                for name in targets & state_names:
+                    raise TypeError(f"State '{name}' cannot be bound in a comprehension at line {node.target.lineno}")
+            if isinstance(node, ast.ExceptHandler) and node.name in state_names:
+                raise TypeError(f"State '{node.name}' cannot be an exception target at line {node.lineno}")
+            if isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)):
+                name = node.rest if isinstance(node, ast.MatchMapping) else node.name
+                if name in state_names:
+                    raise TypeError(f"State '{name}' cannot be a pattern capture at line {node.lineno}")
+            if isinstance(node, ast.withitem) and node.optional_vars is not None:
+                targets = {name.id for name in ast.walk(node.optional_vars) if isinstance(name, ast.Name)}
+                for name in targets & state_names:
+                    raise TypeError(f"State '{name}' cannot be a with target at line {node.optional_vars.lineno}")
+
+    def _state_bind(self, var):
+        binding = self.state_bindings[var.name]
+        return [
+            AST.assignment(binding.slot_name, AST.array_access(var.get_storage_location(), var.array_idx)),
+            AST.assignment(var.name, AST.function_call(f"__ncc_bind_state_{var.name}", ast.Name(id=binding.slot_name, ctx=ast.Load()))),
+        ]
+
+    def _container_init(self, variables):
+        statements = []
+        for var in variables:
+            value_name = f"__ncc_state_init_{var.name}"
+            loaded_name = f"__ncc_state_loaded_{var.name}"
+            state_slot = AST.array_access(var.get_storage_location(), var.array_idx)
+            statements.extend(var.type.init_statements(value_name, loaded_name, state_slot))
+            statements.append(AST.assignment(var.name, AST.function_call(f"__ncc_bind_state_{var.name}", ast.Name(id=value_name, ctx=ast.Load()))))
+        return statements
+
+    def _container_load(self, variables):
+        statements = []
+        for var in variables:
+            value_name = f"__ncc_state_value_{var.name}"
+            loaded_name = f"__ncc_state_loaded_{var.name}"
+            state_slot = AST.array_access(var.get_storage_location(), var.array_idx)
+            statements.append(AST.assignment(loaded_name, state_slot))
+            statements.extend(var.type.post_load_statements(value_name, var.name, ast.Name(id=loaded_name, ctx=ast.Load())))
+            statements.append(AST.assignment(var.name, AST.function_call(f"__ncc_bind_state_{var.name}", ast.Name(id=value_name, ctx=ast.Load()))))
+        return statements
 
     def visit_FunctionDef(self, node):
         from numba_cfunc_compiler.compiler_constants import (
@@ -76,8 +129,12 @@ class NumbaASTConverter(ast.NodeTransformer):
                 if category.init_filter == SourceInitFilter.EVERYTIME:
                     if category.id == SourceCategoryId.STATE and isinstance(var.type, ContainerType):
                         container_state_vars.append(var)
+                        add_statement_to_list(
+                            top_body,
+                            AST.assignment(self.state_bindings[var.name].slot_name, AST.array_access(var.get_storage_location(), var.array_idx)),
+                        )
                         continue
-                    init = var.read()
+                    init = self._state_bind(var) if category.id == SourceCategoryId.STATE else var.read()
                     if init is None:
                         continue
                     add_statement_to_list(top_body, init)
@@ -108,11 +165,11 @@ class NumbaASTConverter(ast.NodeTransformer):
         # Container state: init in start phase, load in execute phase
         if container_state_vars:
             # Prepend container initialization to start_body
-            container_init = ContainerType.emit_container_state_init(container_state_vars)
+            container_init = self._container_init(container_state_vars)
             transformed_start_body = container_init + transformed_start_body
 
             # Prepend container loading to execution_body
-            container_load = ContainerType.emit_container_state_load(container_state_vars)
+            container_load = self._container_load(container_state_vars)
             execution_body = copy.deepcopy(container_load) + execution_body
 
             # STOP needs typed container values for user cleanup code, then must
@@ -198,6 +255,8 @@ class NumbaASTConverter(ast.NodeTransformer):
         if isinstance(node.func, ast.Attribute):
             base = node.func.value
             source = None
+            if isinstance(base, ast.Name) and base.id in self.state_bindings:
+                return self.generic_visit(node)
             if isinstance(base, ast.Name):
                 source = self.variable_factory.from_source_name(base.id)
             elif isinstance(base, ast.Subscript):
@@ -246,6 +305,8 @@ class NumbaASTConverter(ast.NodeTransformer):
         if isinstance(target, ast.Name):
             source = self.variable_factory.from_source_name(target.id)
             if source is not None:
+                if target.id in self.state_bindings:
+                    return self.generic_visit(node)
                 return AST.assignment(source.get(), self.visit(node.value))
             lowered = TypeFactory.try_lower_assignment(node, node.value, self.call_globals)
             if lowered is not None:
@@ -267,11 +328,20 @@ class NumbaASTConverter(ast.NodeTransformer):
 
     @with_handlers("Name")
     def visit_Name(self, node):
+        if node.id in self.state_bindings:
+            return node
         var = self.variable_factory.from_source_name(node.id)
         # Only declared sources need host storage rewrites. Numba owns locals.
         if var is not None:
             return var.read_value() if isinstance(node.ctx, ast.Load) else var.get()
         return node
+
+    def visit_Delete(self, node):
+        for target in node.targets:
+            for name in ast.walk(target):
+                if isinstance(name, ast.Name) and name.id in self.state_bindings:
+                    raise TypeError(f"Cannot delete State '{name.id}' at line {name.lineno}")
+        return self.generic_visit(node)
 
     def visit_AnnAssign(self, node):
         if is_state_annotation(node):

@@ -165,6 +165,10 @@ class VariableType(ABC):
     def get_methods(self) -> list:
         return []
 
+    def get_state_payload(self):
+        """Return an explicit native state binding for this registered type."""
+        raise TypeError(f"{type(self).__name__} has no registered state payload semantics")
+
     def accepts_value_type(self, value_type: type) -> bool:
         """Used for return value checking"""
         return self.value == value_type
@@ -277,37 +281,6 @@ class ContainerType(VariableType):
     def post_load_statements(self, local_var_name: str, var_name: str, loaded_value: ast.AST) -> list[ast.stmt]:
         """Cast loaded voidptr to typed container."""
         return [self.from_voidptr(local_var_name, var_name, loaded_value)]
-
-    @staticmethod
-    def emit_container_state_init(standalone_state_vars, state_array_name: str = STATE_ARRAY_NAME) -> list[ast.stmt]:
-        """Create new containers for state vars (called at LIFECYCLE_START)."""
-        if not standalone_state_vars:
-            return []
-        statements: list[ast.stmt] = []
-        for v in standalone_state_vars:
-            state_slot = AST.array_access(state_array_name, v.array_idx)
-            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
-            statements.extend(v.type.init_statements(v.name, loaded_name, state_slot))
-        return statements
-
-    @staticmethod
-    def emit_container_state_load(standalone_state_vars, state_array_name: str = STATE_ARRAY_NAME) -> list[ast.stmt]:
-        """Load and reconstruct typed containers from state voidptrs."""
-        if not standalone_state_vars:
-            return []
-        statements: list[ast.stmt] = []
-        for v in standalone_state_vars:
-            loaded_name = f"_ncc_standalone_loaded_{v.array_idx}"
-            state_slot = AST.array_access(state_array_name, v.array_idx)
-            statements.append(AST.assignment(loaded_name, state_slot))
-            statements.extend(
-                v.type.post_load_statements(
-                    v.local_variable_name(),
-                    v.name,
-                    ast.Name(id=loaded_name, ctx=ast.Load()),
-                )
-            )
-        return statements
 
     @staticmethod
     def emit_container_state_free(standalone_state_vars, state_array_name: str = STATE_ARRAY_NAME) -> list[ast.stmt]:

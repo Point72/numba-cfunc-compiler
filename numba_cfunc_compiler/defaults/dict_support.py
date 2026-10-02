@@ -25,6 +25,14 @@ class NumbaDictType(ContainerType):
     def get_numba_type_name(self) -> str:
         return "voidptr"
 
+    def get_state_payload(self):
+        from numba_cfunc_compiler.standalone.dict import StandaloneDictType
+        from numba_cfunc_compiler.state_values import borrowed_container_payload
+
+        key_type = NumbaTypeRegistry.resolve_to_numba_type(self.value.key_type)
+        value_type = NumbaTypeRegistry.resolve_to_numba_type(self.value.value_type)
+        return borrowed_container_payload("NumbaDict", StandaloneDictType(key_type, value_type), ("dict", key_type.name, value_type.name))
+
     def _to_voidptr_func_name(self) -> str:
         return "standalone_dict_to_voidptr"
 

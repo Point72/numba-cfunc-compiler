@@ -21,6 +21,11 @@ class TimeDeltaType(VariableType):
     def get_numba_type_name(self) -> str:
         return "int64"
 
+    def get_state_payload(self):
+        from numba_cfunc_compiler.state_values import copy_state_payload
+
+        return copy_state_payload(("datetime", "timedelta"), numba_types.int64, numba_types.int64, 8, 8)
+
     @staticmethod
     def to_nanos(val: _PyTimedelta) -> int:
         """Convert timedelta to nanoseconds."""

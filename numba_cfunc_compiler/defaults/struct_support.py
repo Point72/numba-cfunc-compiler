@@ -1,11 +1,12 @@
 """Host struct metadata for Numba typed views."""
 
+import ast
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from numba import types
 
-from numba_cfunc_compiler.models import UnknownNumbaValue, VariableType
+from numba_cfunc_compiler.models import StateVariableInfo, UnknownNumbaValue, VariableType
 from numba_cfunc_compiler.standalone.struct import StructField, StructLayout
 
 
@@ -25,6 +26,23 @@ class StructType(VariableType):
 
     fields: dict[str, StructFieldInfo] = None
     size: int = 0
+
+    def get_state_payload(self):
+        from numba_cfunc_compiler.state_values import borrowed_struct_payload
+
+        return borrowed_struct_payload(self.get_typed_layout())
+
+    @classmethod
+    def try_parse_state(cls, node: ast.AnnAssign, var_name: str, globalns: dict) -> StateVariableInfo | None:
+        annotation = node.annotation.slice
+        if not isinstance(annotation, ast.Name):
+            return None
+        state_type = globalns.get(annotation.id)
+        if not cls.is_type_supported(state_type):
+            return None
+        if not isinstance(node.value, ast.Constant) or node.value.value is not None:
+            raise TypeError(f"State[{annotation.id}] '{var_name}' requires a host-supported initializer")
+        return StateVariableInfo(var_name, 0, state_type)
 
     def get_typed_layout(self) -> StructLayout:
         if self.fields is None:

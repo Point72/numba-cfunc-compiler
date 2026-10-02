@@ -31,6 +31,19 @@ class PrimitiveType(VariableType):
     def get_numba_type_name(self) -> str:
         return NumbaTypeRegistry.resolve_numba_name(self.value)
 
+    def get_state_payload(self):
+        from numba_cfunc_compiler.state_values import copy_state_payload
+
+        representations = {
+            int: (numba_types.int64, numba_types.int64, 8, 8),
+            float: (numba_types.float64, numba_types.float64, 8, 8),
+            bool: (numba_types.boolean, numba_types.int8, 1, 1),
+        }
+        if self.value not in representations:
+            return super().get_state_payload()
+        payload, storage, size, alignment = representations[self.value]
+        return copy_state_payload((self.value.__module__, self.value.__qualname__), payload, storage, size, alignment)
+
     @classmethod
     def is_type_supported(cls, var_type: Any) -> bool:
         return var_type in cls._PRIMITIVE_TYPES
