@@ -106,13 +106,6 @@ exclude_also = [
 ignore_errors = true
 fail_under = 80
 
-[tool.hatch.build]
-artifacts = [
-    "numba_cfunc_compiler/numba_rt/*.dll",
-    "numba_cfunc_compiler/numba_rt/*.dylib",
-    "numba_cfunc_compiler/numba_rt/*.so",
-]
-
 [tool.hatch.build.sources]
 src = "/"
 
@@ -123,12 +116,18 @@ libraries = [
 ]
 
 [tool.hatch.build.targets.sdist]
+exclude = ["*.dll", "*.dylib", "*.so", "*.pyd"]
 packages = [
     "numba_cfunc_compiler",
 ]
 
 
 [tool.hatch.build.targets.wheel]
+artifacts = [
+    "numba_cfunc_compiler/numba_rt/*.dll",
+    "numba_cfunc_compiler/numba_rt/*.dylib",
+    "numba_cfunc_compiler/numba_rt/*.so",
+]
 packages = [
     "numba_cfunc_compiler",
 ]
