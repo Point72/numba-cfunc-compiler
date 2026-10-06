@@ -188,8 +188,9 @@ def test_enum_sources_and_family_mismatch():
 def test_ffi_alias_methods():
     ref_type = ffi_ref_type("TestCString")
     symbol = "ncc_test_cstring_length"
-    libc = ctypes.CDLL(None)
-    llvm.add_symbol(symbol, ctypes.cast(libc.strlen, ctypes.c_void_p).value)
+    # The current process does not export strlen on every platform.
+    length_callback = ctypes.CFUNCTYPE(ctypes.c_size_t, ctypes.c_void_p)(lambda pointer: len(ctypes.string_at(pointer)))
+    llvm.add_symbol(symbol, ctypes.cast(length_callback, ctypes.c_void_p).value)
     register_ffi_method(ref_type, "length", symbol, types.uintp)
     wrap = ffi_ref_from_voidptr(ref_type)
 
