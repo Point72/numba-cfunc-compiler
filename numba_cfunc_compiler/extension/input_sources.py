@@ -128,7 +128,7 @@ class InputSourceDescriptor:
         return source_value_type(self.type_class, payload_type, storage_type, semantics, layout_key, mutable)
 
     def value_type(self, binding):
-        payload_type, storage_type = binding._boundary_types()
+        payload_type, storage_type = binding.input_boundary_types()
         return self.type_for(payload_type, storage_type, binding.payload.semantics, binding.payload.key, binding.payload.mutable)
 
     def method(self, name, *, overload=False):

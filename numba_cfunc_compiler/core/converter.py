@@ -7,11 +7,6 @@ from numba_cfunc_compiler.core.names import (
 )
 from numba_cfunc_compiler.core.variable_access import OutputAccess, SourceAccess
 from numba_cfunc_compiler.core.variable_factory import VariableFactory
-from numba_cfunc_compiler.extension.callback_components import (
-    CallbackComponentId,
-    ComponentRegistry,
-    MaterializationPhase,
-)
 
 __all__ = [
     "NumbaASTConverter",
@@ -46,7 +41,6 @@ class NumbaASTConverter(ast.NodeTransformer):
     ):
         self.tree = tree
         self.variable_factory = variable_factory
-        self.variable_factory.ast_converter = self
         self.call_globals = dict(call_globals or {})
         self.host_globals = host_globals or {}
         self.start_body = start_body or []
@@ -114,47 +108,16 @@ class NumbaASTConverter(ast.NodeTransformer):
             LIFECYCLE_STOP,
         )
 
-        # Build function arguments dynamically from registered callback components
-        node.args.args = ComponentRegistry.build_func_args()
-
-        # Group variables by their component's materialization phase
-        top_body = []
-        execute_init_body = []
-        state_start = []
-        state_execute = []
-        state_stop_before = []
-        state_stop_after = []
-
-        for component in ComponentRegistry.get_ordered():
-            if component.materialization_phase == MaterializationPhase.NONE:
-                continue
-            for var in self.variable_factory.get_by_component(component.id):
-                if component.materialization_phase == MaterializationPhase.ALWAYS:
-                    if component.id == CallbackComponentId.STATE:
-                        plan = var.state_plan
-                        top_body.extend(plan.before)
-                        state_start.extend(plan.start)
-                        state_execute.extend(plan.execute)
-                        state_stop_before.extend(plan.stop_before)
-                        state_stop_after.extend(plan.stop_after)
-                        continue
-                    init = var.read()
-                    if init is None:
-                        continue
-                    add_statement_to_list(top_body, init)
-                elif component.materialization_phase == MaterializationPhase.EXECUTE:
-                    init = var.read()
-                    if init is None:
-                        continue
-                    add_statement_to_list(execute_init_body, init)
+        node.args.args = self.variable_factory.build_func_args()
+        materialized = self.variable_factory.materialize()
 
         transformed_start_body = self._visit_source_body(self.start_body, LifecycleBody.START)
         transformed_stop_body = self._visit_source_body(self.stop_body, LifecycleBody.STOP)
         execution_body = self._visit_source_body(node.body, LifecycleBody.EXECUTE)
 
-        transformed_start_body = state_start + transformed_start_body
-        execution_body = state_execute + execution_body
-        transformed_stop_body = state_stop_before + transformed_stop_body + state_stop_after
+        transformed_start_body = materialized.phase("start") + transformed_start_body
+        execution_body = materialized.phase("execute") + execution_body
+        transformed_stop_body = materialized.phase("stop_before") + transformed_stop_body + materialized.phase("stop_after")
 
         # Build the lifecycle-aware body
         lifecycle_body = []
@@ -191,12 +154,12 @@ class NumbaASTConverter(ast.NodeTransformer):
                 ops=[ast.Eq()],
                 comparators=[ast.Constant(value=LIFECYCLE_EXECUTE)],
             ),
-            body=(execute_init_body + execution_body) if (execute_init_body or execution_body) else [ast.Pass()],
+            body=(materialized.execute_init + execution_body) if (materialized.execute_init or execution_body) else [ast.Pass()],
             orelse=[],
         )
         lifecycle_body.append(exec_if)
 
-        node.body = top_body + lifecycle_body
+        node.body = materialized.setup + lifecycle_body
         node.returns = None
 
         ast.fix_missing_locations(node)
@@ -347,8 +310,7 @@ class NumbaASTConverter(ast.NodeTransformer):
             and isinstance(node.target, ast.Name)
         ):
             var_name = node.target.id
-            var = self.variable_factory.from_variable_name(var_name)
-            if getattr(var, "component", None) != CallbackComponentId.STATE:
+            if var_name not in self.state_names:
                 raise TypeError(f"{var_name} is not a state variable")
             return None
 

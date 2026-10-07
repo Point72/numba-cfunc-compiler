@@ -43,7 +43,7 @@ from numba_cfunc_compiler.types.native.pointers import cast_voidptr_to_int, cast
 
 # Bump when a compiler implementation change can alter generated native code
 # without changing the generated source or the binding/layout fingerprints.
-COMPILER_IMPLEMENTATION_VERSION = 1
+COMPILER_IMPLEMENTATION_VERSION = 2
 
 __all__ = [
     "CompilationResult",
@@ -156,6 +156,7 @@ def create_compiled_func(
         extract_python_type_fn=extract_python_type_fn,
         decorator_name=decorator_name,
         func_globals=func_globals,
+        call_globals=call_globals,
         signature=signature,
         **kwargs,
     )
@@ -182,7 +183,7 @@ def create_compiled_func(
         variable_factory,
         start_body=start_body,
         stop_body=stop_body,
-        call_globals=call_globals,
+        call_globals=info.call_globals,
         host_globals=info.func_globals,
         state_names=frozenset(state_payloads),
     )

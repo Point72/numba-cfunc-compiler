@@ -187,7 +187,7 @@ def setup_standalone_context() -> CompilationContext:
     return _standalone_ctx
 
 
-def compile_function(func, **constants) -> CompilationResult:
+def compile_function(func, *, call_globals=None, start_body=None, stop_body=None, **constants) -> CompilationResult:
     """Compile a @numba_node function and return the result.
 
     Args:
@@ -233,6 +233,9 @@ def compile_function(func, **constants) -> CompilationResult:
             *compile_args,
             extract_python_type_fn=lambda s: s.get_type(),
             decorator_name="@numba_node",
+            call_globals=call_globals,
+            start_body=start_body,
+            stop_body=stop_body,
         )
 
 

@@ -57,6 +57,7 @@ with CompilationContext() as ctx:
     # result.metadata             — callback component metadata dict
     # result.state_values         — convenience attribute for metadata["state_values"]
     # result.nrt_state_indices / .struct_state_indices / .struct_state_sizes
+    # result.constant_container_indices — hidden state slots for constant lists/dicts
 ```
 
 All registrations are scoped to the active `CompilationContext`. When the `with` block exits, the previous context is restored. If no explicit context exists, `CompilationContext.current()` lazily creates a default with all built-in types.
@@ -64,6 +65,8 @@ All registrations are scoped to the active `CompilationContext`. When the `with`
 Enum and enumset ABI layouts come from the registered enum family and host type definitions. The compiler has no process-wide enum width setting.
 
 `CompilationResult` stores callback component metadata in `result.metadata`, and also exposes those keys through attribute access for convenience. Components receive a `ComponentInputs` record containing the input, state, and output analyses plus `extract_python_type_fn`; they return any metadata from `create_variables()` after registering their variables.
+
+`NumbaList` and `NumbaDict` constant parameters are read-only in compiled callbacks. Mutating methods and item assignment fail during compilation, including through aliases and helper calls. The compiler allocates each constant container once per node instance during START, reuses it during EXECUTE, and frees it during STOP. Hosts must allocate the full `state_values` array, including the hidden slots in `constant_container_indices`, and call START once before EXECUTE and STOP once when the instance ends. `State[NumbaList]` and `State[NumbaDict]` remain mutable.
 
 ______________________________________________________________________
 

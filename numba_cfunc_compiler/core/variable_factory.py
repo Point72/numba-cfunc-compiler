@@ -4,6 +4,25 @@ from typing import Any
 
 from numba_cfunc_compiler.core.names import bind_keyed_input_name, typed_struct_name
 from numba_cfunc_compiler.core.variable_access import KeyedInputAccess, OutputAccess, VariableAccess
+from numba_cfunc_compiler.extension.callback_components import ComponentRegistry, MaterializationPhase
+
+
+class CallbackBody:
+    """Statements contributed by variables to each callback phase."""
+
+    def __init__(self):
+        self.setup = []
+        self.execute_init = []
+        self._lifecycle = {phase: [] for phase in ("start", "execute", "stop_before", "stop_after")}
+
+    def add_lifecycle(self, order, plan):
+        for phase, entries in self._lifecycle.items():
+            entries.append((order, getattr(plan, phase)))
+
+    def phase(self, name):
+        # Later components bind first; cleanup reverses that order.
+        entries = sorted(self._lifecycle[name], key=lambda entry: entry[0], reverse=name != "stop_after")
+        return [statement for _, statements in entries for statement in statements]
 
 
 class VariableFactory:
@@ -11,7 +30,6 @@ class VariableFactory:
         self.variables_by_access_type = defaultdict(list)
         self.component_variables = defaultdict(list)
         self.variable_by_name = {}
-        self.ast_converter = None
         self.typed_struct_bindings = {}
         self.typed_struct_layouts = {}
         self.typed_input_bindings = {}
@@ -55,6 +73,18 @@ class VariableFactory:
     def get_by_component(self, component_id: Any) -> list:
         """Get variables registered under *component_id*."""
         return self.component_variables.get(component_id, [])
+
+    def build_func_args(self) -> list[ast.arg]:
+        return ComponentRegistry.build_func_args()
+
+    def materialize(self) -> CallbackBody:
+        body = CallbackBody()
+        for component in ComponentRegistry.get_ordered():
+            if component.materialization_phase is MaterializationPhase.NONE:
+                continue
+            for variable in self.get_by_component(component.id):
+                variable.contribute(body, component.materialization_phase, component.order)
+        return body
 
     def from_variable_name(self, name: str):
         """Look up a declared variable access by name."""

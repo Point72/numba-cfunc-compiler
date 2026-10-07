@@ -4,14 +4,16 @@ import ast
 import copy
 
 from numba_cfunc_compiler.core.names import (
+    STATE_ARRAY_NAME,
     bind_state_name,
+    container_ptr_name,
     state_init_name,
     state_loaded_name,
     state_slot_name,
     state_value_name,
 )
 from numba_cfunc_compiler.extension.ast import LifecycleBody
-from numba_cfunc_compiler.types.binding import StatePlan
+from numba_cfunc_compiler.types.binding import ConstantPlan, StatePlan
 from numba_cfunc_compiler.utils.ast import AST
 
 
@@ -70,3 +72,30 @@ def container_state_plan(host_type, variable) -> StatePlan:
         stop_after=tuple(stop_after),
         metadata={"nrt_state_indices": (variable.array_idx,)},
     )
+
+
+def container_constant_plan(host_type, name: str, slot_index: int, populate: list[ast.stmt]) -> ConstantPlan:
+    """Keep one compiled constant container in an instance-owned state slot."""
+    slot = AST.array_access(STATE_ARRAY_NAME, slot_index)
+    init_name = state_init_name(name)
+    loaded_name = state_loaded_name(name)
+    cleanup_name = state_value_name(name)
+    create = host_type.create_new_container(init_name)
+    pointer_name = container_ptr_name(init_name)
+    start = [
+        create[0],
+        AST.assignment(copy.deepcopy(slot), ast.Name(id=pointer_name, ctx=ast.Load())),
+        *create[1:],
+        *populate,
+        host_type.from_voidptr(name, name, ast.Name(id=pointer_name, ctx=ast.Load()), readonly=True),
+    ]
+    load = [
+        AST.assignment(loaded_name, copy.deepcopy(slot)),
+        host_type.from_voidptr(name, name, ast.Name(id=loaded_name, ctx=ast.Load()), readonly=True),
+    ]
+    cleanup = [
+        host_type.from_voidptr(cleanup_name, cleanup_name, ast.Name(id=loaded_name, ctx=ast.Load())),
+        ast.Expr(value=AST.function_call(host_type.free_func_name(), ast.Name(id=cleanup_name, ctx=ast.Load()))),
+        AST.assignment(copy.deepcopy(slot), AST.function_call("voidptr_null")),
+    ]
+    return ConstantPlan((), ast.Name(id=name, ctx=ast.Load()), tuple(start), tuple(copy.deepcopy(load)), tuple(load), tuple(cleanup), state_slots=1)
