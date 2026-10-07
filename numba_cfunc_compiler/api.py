@@ -3,9 +3,11 @@
 from typing import Any, Generic, TypeVar
 
 __all__ = [
+    "NumbaArray",
     "NumbaDict",
     "NumbaList",
     "State",
+    "create_new_array",
     "create_new_dict",
     "create_new_list",
     "set_output",
@@ -14,6 +16,7 @@ __all__ = [
 T = TypeVar("T")
 K = TypeVar("K")
 V = TypeVar("V")
+N = TypeVar("N")
 
 
 def set_output(name: str, value: Any):
@@ -41,6 +44,15 @@ class NumbaList(Generic[T]):
 
     Local aliases of state and input lists are supported.
     """
+
+
+class NumbaArray(Generic[T, N]):
+    """Fixed array state or read-only constant input annotated ``NumbaArray[type, length]``."""
+
+
+def create_new_array(element_type: type, length: int) -> NumbaArray:
+    """Initialize a zeroed ``State[NumbaArray]`` with a fixed positive length."""
+    raise NotImplementedError("create_new_array is transformed at compile time by numba_node")
 
 
 class NumbaDict(Generic[K, V]):

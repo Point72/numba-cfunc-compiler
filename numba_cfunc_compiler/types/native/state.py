@@ -307,7 +307,14 @@ def _no_replacement(label: str, name: str):
 
 
 @cache
-def borrowed_container_payload(label: str, native_type: types.Type, layout_key: tuple) -> StatePayload:
+def borrowed_container_payload(
+    label: str,
+    native_type: types.Type,
+    layout_key: tuple,
+    host_size: int = ctypes.sizeof(ctypes.c_void_p),
+    alignment: int = ctypes.alignment(ctypes.c_void_p),
+    bind_function=None,
+) -> StatePayload:
     """Describe a host-owned container that permits mutation, not replacement."""
 
     def store_factory(name):
@@ -317,11 +324,11 @@ def borrowed_container_payload(label: str, native_type: types.Type, layout_key: 
         label=label,
         semantics=ValueSemantics.BORROWED_VIEW,
         native_type=native_type,
-        host_size=ctypes.sizeof(ctypes.c_void_p),
-        alignment=ctypes.alignment(ctypes.c_void_p),
+        host_size=host_size,
+        alignment=alignment,
         layout_key=layout_key,
         replacement=False,
-        bind_function=_container_marker(native_type),
+        bind_function=bind_function or _container_marker(native_type),
         store_factory=store_factory,
     )
 

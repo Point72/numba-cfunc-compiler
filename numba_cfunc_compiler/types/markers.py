@@ -6,6 +6,26 @@ CONTAINER_STATE_INIT = 0
 
 
 @dataclass(frozen=True)
+class ArrayTypeMarker:
+    """Primitive element type and compile-time length of a fixed array."""
+
+    element_type: type
+    length: int
+
+    def __post_init__(self):
+        if self.element_type not in (int, float, bool):
+            raise TypeError(f"Unsupported array element type: {self.element_type}")
+        if type(self.length) is not int or self.length <= 0:
+            raise TypeError("Array length must be a positive compile-time integer")
+        if self.length > (2**63 - 1) // NumbaTypeRegistry.get_size(self.element_type):
+            raise ValueError("Array byte size exceeds the supported address range")
+
+    @property
+    def byte_size(self) -> int:
+        return self.length * NumbaTypeRegistry.get_size(self.element_type)
+
+
+@dataclass(frozen=True)
 class ListTypeMarker:
     """Type marker for NumbaList types used in function signatures and state."""
 

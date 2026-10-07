@@ -26,6 +26,7 @@ from numba_cfunc_compiler.core.postprocess import (
     apply_post_compilation,
 )
 from numba_cfunc_compiler.extension.callback_components import ComponentRegistry
+from numba_cfunc_compiler.types.builtin.array.native import standalone_array_new, standalone_array_readonly
 from numba_cfunc_compiler.types.builtin.dict.native import (
     standalone_dict_free,
     standalone_dict_from_voidptr,
@@ -249,6 +250,8 @@ def create_compiled_func(
             "cast_voidptr_to_ptr": cast_voidptr_to_ptr,
             "voidptr_null": voidptr_null,
             "cast_voidptr_to_int": cast_voidptr_to_int,
+            "standalone_array_new": standalone_array_new,
+            "standalone_array_readonly": standalone_array_readonly,
             # standalone list (NRT-free)
             "standalone_list_new": standalone_list_new,
             "standalone_list_from_voidptr": standalone_list_from_voidptr,
