@@ -7,11 +7,16 @@ from typing import Any, get_args, get_origin
 
 from numba_cfunc_compiler.api import NumbaDict
 from numba_cfunc_compiler.core.analysis import ParameterInfo
-from numba_cfunc_compiler.core.names import container_ptr_name
+from numba_cfunc_compiler.core.names import container_ptr_name, state_init_name
 from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
-from numba_cfunc_compiler.types.builtin.container import container_state_plan, reject_container_constructor, require_container_state_initializer
+from numba_cfunc_compiler.types.builtin.container import (
+    container_constant_plan,
+    container_state_plan,
+    reject_container_constructor,
+    require_container_state_initializer,
+)
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, DictTypeMarker
 from numba_cfunc_compiler.types.registry import NumbaTypeRegistry
@@ -65,11 +70,12 @@ class DictHostType(HostType):
                     ast.Name(id=ptr_name, ctx=ast.Load()),
                     ast.Constant(value=self._key_type_name()),
                     ast.Constant(value=self._val_type_name()),
+                    ast.Constant(value=False),
                 ),
             ),
         ]
 
-    def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST) -> ast.AST:
+    def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST, readonly: bool = False) -> ast.AST:
         """Cast voidptr back to typed standalone dict."""
         return AST.assignment(
             local_var_name,
@@ -78,6 +84,7 @@ class DictHostType(HostType):
                 loaded_value,
                 ast.Constant(value=self._key_type_name()),
                 ast.Constant(value=self._val_type_name()),
+                ast.Constant(value=readonly),
             ),
         )
 
@@ -90,22 +97,20 @@ class DictHostType(HostType):
     def is_opaque_pointer(self) -> bool:
         return True
 
-    def constant_plan(self, local_var_name: str, value: Any, call_globals: dict) -> ConstantPlan:
-        """Create a standalone dict and populate it with constant values."""
+    def constant_plan(self, local_var_name: str, value: Any, call_globals: dict, slot_index: int) -> ConstantPlan:
+        """Populate a dict once in START and bind it read-only thereafter."""
         items = list(value.items())
         if not isinstance(self.value, DictTypeMarker):
             raise TypeError(f"Expected DictTypeMarker, got {type(self.value)}")
 
-        # Create the dict using the type's create_new_container method
-        stmts = self.create_new_container(local_var_name)
-
-        # Set each key-value pair
+        init_name = state_init_name(local_var_name)
+        populate = []
         for k, v in items:
-            stmts.append(
+            populate.append(
                 ast.Assign(
                     targets=[
                         ast.Subscript(
-                            value=ast.Name(id=local_var_name, ctx=ast.Load()),
+                            value=ast.Name(id=init_name, ctx=ast.Load()),
                             slice=ast.Constant(value=k),
                             ctx=ast.Store(),
                         )
@@ -114,7 +119,7 @@ class DictHostType(HostType):
                 )
             )
 
-        return ConstantPlan(tuple(stmts), ast.Name(id=local_var_name, ctx=ast.Load()))
+        return container_constant_plan(self, local_var_name, slot_index, populate)
 
     @classmethod
     def is_type_supported(cls, var_type: Any) -> bool:

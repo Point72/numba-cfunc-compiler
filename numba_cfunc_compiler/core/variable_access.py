@@ -10,9 +10,10 @@ from numba_cfunc_compiler.core.names import (
     bind_output_name,
     output_sink_name,
 )
+from numba_cfunc_compiler.extension.callback_components import MaterializationPhase
 from numba_cfunc_compiler.extension.input_sources import SLOT_INDEX, InputSourceDescriptor, KeyedInputDescriptor, _require_dense_slots
 from numba_cfunc_compiler.types.binding import TypeBinding
-from numba_cfunc_compiler.utils.ast import AST
+from numba_cfunc_compiler.utils.ast import AST, add_statement_to_list
 
 
 class VariableAccess:
@@ -46,6 +47,17 @@ class VariableAccess:
 
     def read_value(self):
         return self.get()
+
+    def contribute(self, body, phase: MaterializationPhase, order: int):
+        if phase is MaterializationPhase.ALWAYS:
+            plan = getattr(self, "state_plan", None)
+            if plan is not None:
+                body.setup.extend(plan.before)
+                body.add_lifecycle(order, plan)
+            else:
+                add_statement_to_list(body.setup, self.read())
+        elif phase is MaterializationPhase.EXECUTE:
+            add_statement_to_list(body.execute_init, self.read())
 
 
 class PointerSlotAccess(VariableAccess):
@@ -271,10 +283,22 @@ class ConstantAccess(VariableAccess):
         self.value = value
         self._constant_plan = None
 
-    def _plan(self):
-        if self._constant_plan is None:
-            self._constant_plan = self.type.constant_plan(self.name, self.value, self.variable_factory.ast_converter.call_globals)
+    def prepare_plan(self, call_globals: dict, slot_index: int):
+        self._constant_plan = self.type.constant_plan(self.name, self.value, call_globals, slot_index)
         return self._constant_plan
+
+    def constant_plan(self):
+        if self._constant_plan is None:
+            raise RuntimeError(f"Constant '{self.name}' has no materialization plan")
+        return self._constant_plan
+
+    def contribute(self, body, phase: MaterializationPhase, order: int):
+        if phase is MaterializationPhase.ALWAYS:
+            plan = self.constant_plan()
+            body.setup.extend(plan.setup)
+            body.add_lifecycle(order, plan)
+        else:
+            super().contribute(body, phase, order)
 
     def local_variable_name(self):
         return self.name
@@ -283,7 +307,7 @@ class ConstantAccess(VariableAccess):
         raise ValueError("Constants are not stored in a storage location")
 
     def read(self):
-        return list(self._plan().setup)
+        return list(self.constant_plan().setup)
 
     def get(self):
-        return copy.deepcopy(self._plan().value)
+        return copy.deepcopy(self.constant_plan().value)

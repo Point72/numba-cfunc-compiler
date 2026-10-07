@@ -42,10 +42,11 @@ class ListValueType(types.IterableType):
     The list stores elements of a single primitive type (int64, float64, int8).
     """
 
-    def __init__(self, dtype):
+    def __init__(self, dtype, readonly=False):
         self.dtype = dtype  # Element type: types.int64, types.float64, types.int8
+        self.readonly = readonly
         self.item_size = self._get_item_size(dtype)
-        super().__init__(name=f"StandaloneList[{dtype}]")
+        super().__init__(name=f"StandaloneList[{dtype}, readonly={readonly}]")
 
     @staticmethod
     def _get_item_size(dtype):
@@ -57,7 +58,10 @@ class ListValueType(types.IterableType):
 
     @property
     def key(self):
-        return self.dtype
+        return (self.dtype, self.readonly)
+
+    def as_readonly(self):
+        return ListValueType(self.dtype, readonly=True)
 
     @property
     def iterator_type(self):
@@ -236,7 +240,7 @@ def standalone_list_new(typingctx, item_size_ty, allocated_ty):
 @intrinsic
 def standalone_list_free(typingctx, lst_ty):
     """Release an NB_List allocated by :func:`standalone_list_new`."""
-    if isinstance(lst_ty, ListValueType):
+    if isinstance(lst_ty, ListValueType) and not lst_ty.readonly:
         sig = types.void(lst_ty)
 
         def codegen(context, builder, signature, args):
@@ -274,7 +278,7 @@ def standalone_list_length(typingctx, lst_ty):
 @intrinsic
 def standalone_list_append(typingctx, lst_ty, value_ty):
     """Append a value to a StandaloneList."""
-    if isinstance(lst_ty, ListValueType) and isinstance(value_ty, (types.Integer, types.Float, types.Boolean)):
+    if isinstance(lst_ty, ListValueType) and not lst_ty.readonly and isinstance(value_ty, (types.Integer, types.Float, types.Boolean)):
         return types.int32(lst_ty, value_ty), _make_append_codegen(lst_ty.dtype)
 
 
@@ -286,24 +290,26 @@ def standalone_list_getitem(typingctx, lst_ty, index_ty):
 
 
 @intrinsic
-def standalone_list_from_voidptr(typingctx, voidptr_ty, dtype_ty):
+def standalone_list_from_voidptr(typingctx, voidptr_ty, dtype_ty, readonly_ty):
     """
     Cast a voidptr (from state slot) to a typed ListValueType.
 
     This is needed to convert the raw pointer stored in state back to a typed list.
     """
     if voidptr_ty == types.voidptr and isinstance(dtype_ty, types.Literal):
+        if not isinstance(readonly_ty, types.Literal) or not isinstance(readonly_ty.literal_value, bool):
+            return None
         dtype_name = dtype_ty.literal_value
         elem_type_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_list_element_types())
 
         if dtype_name not in elem_type_map:
             return None
 
-        result_type = ListValueType(elem_type_map[dtype_name])
-        sig = result_type(voidptr_ty, dtype_ty)
+        result_type = ListValueType(elem_type_map[dtype_name], readonly=readonly_ty.literal_value)
+        sig = result_type(voidptr_ty, dtype_ty, readonly_ty)
 
         def codegen(context, builder, signature, args):
-            [voidptr, _] = args
+            voidptr = args[0]
             # Just return the pointer as-is; the type change is at Numba level only
             return voidptr
 
@@ -315,7 +321,7 @@ def standalone_list_to_voidptr(typingctx, lst_ty):
     """
     Cast a ListValueType back to voidptr for storage in state slot.
     """
-    if isinstance(lst_ty, ListValueType):
+    if isinstance(lst_ty, ListValueType) and not lst_ty.readonly:
         sig = types.voidptr(lst_ty)
 
         def codegen(context, builder, signature, args):
@@ -328,7 +334,12 @@ def standalone_list_to_voidptr(typingctx, lst_ty):
 @intrinsic
 def standalone_list_setitem(typingctx, lst_ty, index_ty, value_ty):
     """Set an item in a StandaloneList."""
-    if isinstance(lst_ty, ListValueType) and isinstance(index_ty, types.Integer) and isinstance(value_ty, (types.Integer, types.Float)):
+    if (
+        isinstance(lst_ty, ListValueType)
+        and not lst_ty.readonly
+        and isinstance(index_ty, types.Integer)
+        and isinstance(value_ty, (types.Integer, types.Float))
+    ):
         return types.int32(lst_ty, index_ty, value_ty), _make_setitem_codegen(lst_ty.dtype)
 
 
@@ -339,7 +350,7 @@ def standalone_list_delitem(typingctx, lst_ty, index_ty):
 
     int numba_list_delitem(NB_List *lp, Py_ssize_t index)
     """
-    if isinstance(lst_ty, ListValueType) and isinstance(index_ty, types.Integer):
+    if isinstance(lst_ty, ListValueType) and not lst_ty.readonly and isinstance(index_ty, types.Integer):
         sig = types.int32(lst_ty, index_ty)
 
         def codegen(context, builder, signature, args):
@@ -363,7 +374,7 @@ def standalone_list_resize(typingctx, lst_ty, newsize_ty):
 
     int numba_list_resize(NB_List *lp, Py_ssize_t newsize)
     """
-    if isinstance(lst_ty, ListValueType) and isinstance(newsize_ty, types.Integer):
+    if isinstance(lst_ty, ListValueType) and not lst_ty.readonly and isinstance(newsize_ty, types.Integer):
         sig = types.int32(lst_ty, newsize_ty)
 
         def codegen(context, builder, signature, args):

@@ -48,12 +48,13 @@ class DictValueType(types.IterableType):
     The dict stores key-value pairs of primitive types (int64, float64, int8).
     """
 
-    def __init__(self, key_type, value_type):
+    def __init__(self, key_type, value_type, readonly=False):
         self.key_type = key_type  # Key type: types.int64, types.int8
         self.value_type = value_type  # Value type: types.int64, types.float64, types.int8
+        self.readonly = readonly
         self.key_size = self._get_type_size(key_type)
         self.value_size = self._get_type_size(value_type)
-        super().__init__(name=f"StandaloneDict[{key_type}, {value_type}]")
+        super().__init__(name=f"StandaloneDict[{key_type}, {value_type}, readonly={readonly}]")
 
     @property
     def iterator_type(self):
@@ -69,7 +70,10 @@ class DictValueType(types.IterableType):
 
     @property
     def key(self):
-        return (self.key_type, self.value_type)
+        return (self.key_type, self.value_type, self.readonly)
+
+    def as_readonly(self):
+        return DictValueType(self.key_type, self.value_type, readonly=True)
 
 
 class StandaloneDictIterableType(types.IterableType):
@@ -266,7 +270,7 @@ def standalone_dict_new(typingctx, key_size_ty, val_size_ty):
 @intrinsic
 def standalone_dict_free(typingctx, dict_ty):
     """Release an NB_Dict allocated by :func:`standalone_dict_new`."""
-    if isinstance(dict_ty, DictValueType):
+    if isinstance(dict_ty, DictValueType) and not dict_ty.readonly:
         sig = types.void(dict_ty)
 
         def codegen(context, builder, signature, args):
@@ -337,7 +341,12 @@ def standalone_dict_contains(typingctx, dict_ty, key_ty):
 @intrinsic
 def standalone_dict_insert(typingctx, dict_ty, key_ty, val_ty):
     """Insert a key-value pair into the dict."""
-    if isinstance(dict_ty, DictValueType) and isinstance(key_ty, types.Integer) and isinstance(val_ty, (types.Integer, types.Float, types.Boolean)):
+    if (
+        isinstance(dict_ty, DictValueType)
+        and not dict_ty.readonly
+        and isinstance(key_ty, types.Integer)
+        and isinstance(val_ty, (types.Integer, types.Float, types.Boolean))
+    ):
         sig = types.int32(dict_ty, key_ty, val_ty)
 
         def codegen(context, builder, signature, args):
@@ -370,7 +379,7 @@ def standalone_dict_get(typingctx, dict_ty, key_ty, default_ty):
 @intrinsic
 def standalone_dict_pop(typingctx, dict_ty, key_ty):
     """Lookup key, delete it, and return the value (single lookup)."""
-    if isinstance(dict_ty, DictValueType) and isinstance(key_ty, types.Integer):
+    if isinstance(dict_ty, DictValueType) and not dict_ty.readonly and isinstance(key_ty, types.Integer):
         sig = dict_ty.value_type(dict_ty, key_ty)
 
         def codegen(context, builder, signature, args):
@@ -392,7 +401,7 @@ def standalone_dict_popitem(typingctx, dict_ty):
     Pop an arbitrary item from the dict.
     Returns the key (value is discarded).
     """
-    if isinstance(dict_ty, DictValueType):
+    if isinstance(dict_ty, DictValueType) and not dict_ty.readonly:
         sig = dict_ty.key_type(dict_ty)
 
         def codegen(context, builder, signature, args):
@@ -419,7 +428,7 @@ def standalone_dict_popitem(typingctx, dict_ty):
 @intrinsic
 def standalone_dict_clear(typingctx, dict_ty):
     """Clear all items from a StandaloneDict."""
-    if isinstance(dict_ty, DictValueType):
+    if isinstance(dict_ty, DictValueType) and not dict_ty.readonly:
         sig = types.int32(dict_ty)
 
         def codegen(context, builder, signature, args):
@@ -434,11 +443,13 @@ def standalone_dict_clear(typingctx, dict_ty):
 
 
 @intrinsic
-def standalone_dict_from_voidptr(typingctx, voidptr_ty, key_type_ty, val_type_ty):
+def standalone_dict_from_voidptr(typingctx, voidptr_ty, key_type_ty, val_type_ty, readonly_ty):
     """
     Cast a voidptr (from state slot) to a typed DictValueType.
     """
     if voidptr_ty == types.voidptr and isinstance(key_type_ty, types.Literal) and isinstance(val_type_ty, types.Literal):
+        if not isinstance(readonly_ty, types.Literal) or not isinstance(readonly_ty.literal_value, bool):
+            return None
         key_type_name = key_type_ty.literal_value
         val_type_name = val_type_ty.literal_value
 
@@ -446,11 +457,11 @@ def standalone_dict_from_voidptr(typingctx, voidptr_ty, key_type_ty, val_type_ty
         val_map = NumbaTypeRegistry.get_numba_type_map(NumbaTypeRegistry.get_dict_value_types())
 
         if key_type_name in key_map and val_type_name in val_map:
-            result_type = DictValueType(key_map[key_type_name], val_map[val_type_name])
-            sig = result_type(voidptr_ty, key_type_ty, val_type_ty)
+            result_type = DictValueType(key_map[key_type_name], val_map[val_type_name], readonly=readonly_ty.literal_value)
+            sig = result_type(voidptr_ty, key_type_ty, val_type_ty, readonly_ty)
 
             def codegen(context, builder, signature, args):
-                [voidptr, _, _] = args
+                voidptr = args[0]
                 return voidptr
 
             return sig, codegen
@@ -461,7 +472,7 @@ def standalone_dict_to_voidptr(typingctx, dict_ty):
     """
     Cast a DictValueType back to voidptr for storage in state slot.
     """
-    if isinstance(dict_ty, DictValueType):
+    if isinstance(dict_ty, DictValueType) and not dict_ty.readonly:
         sig = types.voidptr(dict_ty)
 
         def codegen(context, builder, signature, args):

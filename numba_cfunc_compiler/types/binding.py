@@ -11,6 +11,11 @@ from numba_cfunc_compiler.types.native.state import CopyStateValueType, StatePay
 class ConstantPlan:
     setup: tuple[ast.stmt, ...]
     value: ast.expr
+    start: tuple[ast.stmt, ...] = ()
+    execute: tuple[ast.stmt, ...] = ()
+    stop_before: tuple[ast.stmt, ...] = ()
+    stop_after: tuple[ast.stmt, ...] = ()
+    state_slots: int = 0
 
 
 @dataclass(frozen=True)
@@ -44,14 +49,21 @@ class TypeBinding:
             return native.payload_type, native.storage_type
         return native, native
 
+    def input_boundary_types(self):
+        native, storage = self._boundary_types()
+        if hasattr(native, "as_readonly"):
+            native = native.as_readonly()
+            storage = native
+        return native, storage
+
     def output_sink_type(self):
         from numba_cfunc_compiler.types.native.output import output_sink_type
 
         native, storage = self._boundary_types()
         return output_sink_type(native, storage, self.payload.semantics, self.host_size, self.payload.key)
 
-    def constant_plan(self, name: str, value: Any, call_globals: dict) -> ConstantPlan:
-        return self.host_type.constant_plan(name, value, call_globals)
+    def constant_plan(self, name: str, value: Any, call_globals: dict, slot_index: int) -> ConstantPlan:
+        return self.host_type.constant_plan(name, value, call_globals, slot_index)
 
     def slot_read(self, name: str, slot: ast.expr, variable_factory) -> ast.stmt | list[ast.stmt]:
         return self.host_type.slot_read(name, slot, variable_factory)

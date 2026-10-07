@@ -68,11 +68,12 @@ class CallbackComponent(ABC):
     @property
     @abstractmethod
     def order(self) -> int:
-        """Position in cfunc signature. Lower = earlier.
+        """Position in cfunc signature and lifecycle ordering. Lower = earlier.
 
         Built-in components reserve negative orders so extensions can safely
         start at ``order = 0`` and append user-defined parameters after the
-        framework-owned prefix.
+        framework-owned prefix. Lifecycle binds run in reverse order; cleanup
+        runs in component order.
         """
         ...
 
