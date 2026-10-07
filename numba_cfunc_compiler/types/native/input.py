@@ -93,7 +93,11 @@ class InputValueType(types.Type):
             self.mutable,
         )
 
-    def can_convert_to(self, typingctx, other):
+    def unify(self, typingctx, other):
+        from numba_cfunc_compiler.types.native.state import CopyStateValueType
+
+        if other == self.payload_type or (isinstance(other, (InputValueType, CopyStateValueType)) and self.payload_type == other.payload_type):
+            return self.payload_type
         return None
 
 
@@ -170,6 +174,7 @@ def bind_input(value_type: InputValueType):
     return bind
 
 
+@lower_cast(InputValueType, types.Boolean)
 @lower_cast(InputValueType, types.Type)
 def input_value_cast(context, builder, from_type, to_type, value):
     if to_type != from_type.payload_type:
@@ -296,16 +301,18 @@ for _operation in (
 def _install_unary_operator(operation):
     @overload(operation)
     def source_unary(value):
-        if not isinstance(value, InputValueType):
+        from numba_cfunc_compiler.types.native.state import CopyStateValueType
+
+        if not isinstance(value, (InputValueType, CopyStateValueType)):
             return None
 
         def impl(value):
-            return operation(input_payload(value))
+            return operation(unwrap_source(value))
 
         return impl
 
 
-for _operation in (abs, operator.neg, operator.pos, operator.invert):
+for _operation in (abs, operator.neg, operator.pos, operator.invert, operator.not_):
     _install_unary_operator(_operation)
 
 
