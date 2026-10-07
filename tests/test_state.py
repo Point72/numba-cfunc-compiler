@@ -147,6 +147,33 @@ def copied_bool(change: Signal[int]) -> Signal[bool]:
 
 
 @numba_node
+def state_bool_condition(change: Signal[int]) -> Signal[int]:
+    initialized: State[bool] = False
+    if not initialized:
+        initialized = True
+        return 1
+    return 2
+
+
+@numba_node
+def state_bool_toggle(change: Signal[int]) -> Signal[int]:
+    flag: State[bool] = False
+    flag = not flag
+    return 1 if flag else 2
+
+
+@numba_node
+def choose_datetime(value: Signal[datetime], choose_input: Signal[bool]) -> Signal[datetime]:
+    previous: State[datetime] = 0
+    if choose_input:
+        result = value
+    else:
+        result = previous
+    previous = value
+    return result
+
+
+@numba_node
 def copied_time_values(change: Signal[int]) -> Signal[int]:
     stamp: State[datetime] = 1
     span: State[timedelta] = 2
@@ -437,6 +464,15 @@ def test_copy_snapshots():
     flags = CompiledNode(compile_function(copied_bool), input_types=[int]).start()
     assert flags.execute([1]) == (False, True)
     assert flags.execute([0]) == (True, True)
+    conditions = CompiledNode(compile_function(state_bool_condition), input_types=[int]).start()
+    assert conditions.execute([0]) == (1, True)
+    assert conditions.execute([0]) == (2, True)
+    toggled = CompiledNode(compile_function(state_bool_toggle), input_types=[int]).start()
+    assert toggled.execute([0]) == (1, True)
+    assert toggled.execute([0]) == (2, True)
+    chosen = CompiledNode(compile_function(choose_datetime), input_types=[int, bool]).start()
+    assert chosen.execute([10, True]) == (10, True)
+    assert chosen.execute([20, False]) == (10, True)
     time_result = compile_function(copied_time_values)
     times = CompiledNode(time_result, input_types=[int])
     for index, value in enumerate(time_result.state_values):
