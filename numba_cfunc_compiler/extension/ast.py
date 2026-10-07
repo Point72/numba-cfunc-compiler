@@ -11,9 +11,18 @@ __all__ = [
     "ASTHandlerRegistry",
     "HandlerPhase",
     "HandlerResult",
+    "LifecycleBody",
     "ast_handler",
     "with_handlers",
 ]
+
+
+class LifecycleBody(Enum):
+    """User source body currently being transformed."""
+
+    START = auto()
+    EXECUTE = auto()
+    STOP = auto()
 
 
 class HandlerPhase(Enum):
@@ -167,6 +176,9 @@ def ast_handler(
         pre: Register as pre-handler (runs before default logic)
         post: Register as post-handler (runs after default logic)
         priority: Lower values run first
+
+    Handlers can inspect ``converter.current_body`` for the active
+    :class:`LifecycleBody`, or ``None`` outside a source body.
 
     Pre-handler: (converter, node) -> ast.AST | HandlerResult | None
         Return non-None to short-circuit, None to continue

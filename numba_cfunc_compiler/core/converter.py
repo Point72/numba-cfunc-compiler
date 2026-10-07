@@ -12,13 +12,13 @@ from numba_cfunc_compiler.extension.callback_components import (
     ComponentRegistry,
     MaterializationPhase,
 )
-from numba_cfunc_compiler.types.factory import HostTypeFactory
 
 __all__ = [
     "NumbaASTConverter",
 ]
 
 from numba_cfunc_compiler.extension.ast import (
+    LifecycleBody,
     with_handlers,
 )
 from numba_cfunc_compiler.utils.ast import (
@@ -53,6 +53,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.stop_body = stop_body or []
         self.state_names = state_names
         self._state_aug_index = 0
+        self.current_body: LifecycleBody | None = None
         for body in (tree, *self.start_body, *self.stop_body):
             self._validate_state_binding_forms(body)
 
@@ -92,6 +93,18 @@ class NumbaASTConverter(ast.NodeTransformer):
     @staticmethod
     def _state_store(name: str, value: ast.AST) -> ast.Call:
         return AST.function_call(state_store_name(name), ast.Name(id=state_slot_name(name), ctx=ast.Load()), value)
+
+    def _visit_source_body(self, statements: list[ast.AST], body: LifecycleBody) -> list[ast.stmt]:
+        """Expose the source lifecycle body to AST handlers while visiting it."""
+        previous_body = self.current_body
+        self.current_body = body
+        try:
+            transformed_body = []
+            for stmt in statements:
+                add_statement_to_list(transformed_body, self.visit(stmt))
+            return transformed_body
+        finally:
+            self.current_body = previous_body
 
     def visit_FunctionDef(self, node):
         from numba_cfunc_compiler.core.names import (
@@ -135,23 +148,9 @@ class NumbaASTConverter(ast.NodeTransformer):
                         continue
                     add_statement_to_list(execute_init_body, init)
 
-        # Transform user's start_body statements
-        transformed_start_body = []
-        for stmt in self.start_body:
-            transformed_stmt = self.visit(stmt)
-            add_statement_to_list(transformed_start_body, transformed_stmt)
-
-        # Transform user's stop_body statements
-        transformed_stop_body = []
-        for stmt in self.stop_body:
-            transformed_stmt = self.visit(stmt)
-            add_statement_to_list(transformed_stop_body, transformed_stmt)
-
-        # Transform user's execution body
-        execution_body = []
-        for stmt in node.body:
-            transformed_stmt = self.visit(stmt)
-            add_statement_to_list(execution_body, transformed_stmt)
+        transformed_start_body = self._visit_source_body(self.start_body, LifecycleBody.START)
+        transformed_stop_body = self._visit_source_body(self.stop_body, LifecycleBody.STOP)
+        execution_body = self._visit_source_body(node.body, LifecycleBody.EXECUTE)
 
         transformed_start_body = state_start + transformed_start_body
         execution_body = state_execute + execution_body
@@ -290,10 +289,6 @@ class NumbaASTConverter(ast.NodeTransformer):
                 if isinstance(access, SourceAccess):
                     return self.generic_visit(node)
                 return AST.assignment(access.get(), self.visit(node.value))
-            lowered = HostTypeFactory.lower_local_assignment(node, self.call_globals)
-            if lowered is not None:
-                return [self.visit(stmt) for stmt in lowered]
-
         return self.generic_visit(node)
 
     @with_handlers("AugAssign")
@@ -342,7 +337,9 @@ class NumbaASTConverter(ast.NodeTransformer):
                     raise TypeError(f"Cannot delete State '{name.id}' at line {name.lineno}")
         return self.generic_visit(node)
 
+    @with_handlers("AnnAssign")
     def visit_AnnAssign(self, node):
+        """Let type handlers check initializers before removing state declarations."""
         if (
             isinstance(node.annotation, ast.Subscript)
             and isinstance(node.annotation.value, ast.Name)

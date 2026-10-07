@@ -10,7 +10,10 @@ from numba import cfunc, njit, types
 from numba.core.errors import TypingError
 
 from numba_cfunc_compiler.core.context import CompilationContext
-from numba_cfunc_compiler.extension.ast import ASTHandlerRegistry, HandlerPhase, HandlerResult, ast_handler, with_handlers
+from numba_cfunc_compiler.core.converter import NumbaASTConverter
+from numba_cfunc_compiler.core.defaults import register_all
+from numba_cfunc_compiler.core.variable_factory import VariableFactory
+from numba_cfunc_compiler.extension.ast import ASTHandlerRegistry, HandlerPhase, HandlerResult, LifecycleBody, ast_handler, with_handlers
 from numba_cfunc_compiler.extension.bindings import register_value_type, value_binding
 from numba_cfunc_compiler.extension.ffi import (
     ffi_binding_fingerprint,
@@ -99,6 +102,28 @@ def test_handlers():
 
         result, _ = ASTHandlerRegistry.run_pre_handlers("Name", None, ast.Name(id="x", ctx=ast.Load()))
         assert result.id == "decorated"
+
+
+def test_ast_handlers_receive_lifecycle_body():
+    with CompilationContext():
+        register_all()
+        observed = []
+
+        @ast_handler("Expr", pre=True)
+        def record_body(converter, node):
+            observed.append((node.value.value, converter.current_body))
+
+        tree = ast.parse("def callback():\n    3").body[0]
+        converter = NumbaASTConverter(
+            tree,
+            VariableFactory(),
+            start_body=ast.parse("1").body,
+            stop_body=ast.parse("2").body,
+        )
+        assert converter.current_body is None
+        converter.visit(tree)
+        assert dict(observed) == {1: LifecycleBody.START, 2: LifecycleBody.STOP, 3: LifecycleBody.EXECUTE}
+        assert converter.current_body is None
 
 
 def test_enum_sources_and_family_mismatch():

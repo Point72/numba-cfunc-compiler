@@ -36,11 +36,10 @@ class NumbaList(Generic[T]):
         def my_node(data: NumbaList[int]) -> Signal[int]:
             ...
 
-    For local variables, use create_new_list():
-        l = create_new_list(int)
-
-    For state variables, use State[NumbaList] with create_new_list():
+    For persistent state, use State[NumbaList] with create_new_list():
         my_list: State[NumbaList] = create_new_list(int)
+
+    Local aliases of state and input lists are supported.
     """
 
 
@@ -56,17 +55,18 @@ class NumbaDict(Generic[K, V]):
         def my_node(data: NumbaDict[int, float]) -> Signal[float]:
             ...
 
-    For local variables, use create_new_dict():
-        d = create_new_dict(int, float)
-
-    For state variables, use State[NumbaDict] with create_new_dict():
+    For persistent state, use State[NumbaDict] with create_new_dict():
         my_dict: State[NumbaDict] = create_new_dict(int, int)
+
+    Local aliases of state and input dicts are supported.
     """
 
 
 def create_new_list(element_type: type) -> NumbaList:
     """
-    Create a new empty list with the specified element type.
+    Initialize an empty State[NumbaList] with the specified element type.
+
+    This constructor is only supported directly in a state declaration.
 
     Args:
         element_type: The type of elements (int, float, or bool)
@@ -79,7 +79,9 @@ def create_new_list(element_type: type) -> NumbaList:
 
 def create_new_dict(key_type: type, value_type: type) -> NumbaDict:
     """
-    Create a new empty dict with the specified key and value types.
+    Initialize an empty State[NumbaDict] with the specified key and value types.
+
+    This constructor is only supported directly in a state declaration.
 
     Args:
         key_type: The type of keys (only int is supported)
