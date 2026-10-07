@@ -8,14 +8,12 @@ from typing import Any, get_args, get_origin
 from numba_cfunc_compiler.api import NumbaList
 from numba_cfunc_compiler.core.analysis import ParameterInfo
 from numba_cfunc_compiler.core.names import container_ptr_name, state_init_name
-from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
 from numba_cfunc_compiler.types.builtin.container import (
     container_constant_plan,
     container_state_plan,
-    reject_container_constructor,
-    require_container_state_initializer,
+    ensure_no_local,
 )
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, ListTypeMarker
@@ -185,14 +183,4 @@ class ListHostType(HostType):
 def register() -> None:
     """Register the built-in list host adapter."""
     HostTypeFactory.register(ListHostType)
-
-    @ast_handler("AnnAssign", pre=True)
-    def _list_state_initializer(converter, node: ast.AnnAssign):
-        if ListHostType._is_create_new_list_call(node.value):
-            require_container_state_initializer(node, "NumbaList", body=converter.current_body)
-
-    @ast_handler("Call", post=True)
-    def _reject_local_list(converter, node: ast.Call, result):
-        if ListHostType._is_create_new_list_call(node):
-            reject_container_constructor(node, "NumbaList")
-        return result
+    ensure_no_local("create_new_list", "NumbaList")

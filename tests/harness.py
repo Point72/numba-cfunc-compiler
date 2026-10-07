@@ -314,6 +314,11 @@ class CompiledNode:
         self._out_store, self._outputs = _slot_arrays(self._n_outputs)
         # State cells start zeroed (NULL); container state is allocated on START.
         self._state_store, self._state = _slot_arrays(self._n_state)
+        self._raw_state_buffers = []
+        for idx, size in zip(getattr(result, "struct_state_indices", ()), getattr(result, "struct_state_sizes", ())):
+            raw = (ctypes.c_uint8 * size)()
+            self._raw_state_buffers.append(raw)
+            self._state[idx] = ctypes.addressof(raw)
 
         n_in = max(self._n_inputs, 1)
         self._in_ticked = (ctypes.c_int8 * n_in)(*([1] * n_in))

@@ -1,4 +1,4 @@
-"""Shared lifecycle plan for standalone list and dictionary state."""
+"""Shared constructor rules and lifecycle plans for standalone containers."""
 
 import ast
 import copy
@@ -12,7 +12,7 @@ from numba_cfunc_compiler.core.names import (
     state_slot_name,
     state_value_name,
 )
-from numba_cfunc_compiler.extension.ast import LifecycleBody
+from numba_cfunc_compiler.extension.ast import LifecycleBody, ast_handler
 from numba_cfunc_compiler.types.binding import ConstantPlan, StatePlan
 from numba_cfunc_compiler.utils.ast import AST
 
@@ -36,6 +36,24 @@ def reject_container_constructor(call: ast.Call, expected_type: str) -> None:
         f"{call.func.id}() is only supported as a State[{expected_type}] initializer "
         f"at line {getattr(call, 'lineno', '?')}; standalone container locals have no cleanup"
     )
+
+
+def ensure_no_local(constructor: str, state_type: str) -> None:
+    """Allow a container constructor only in a matching state initializer."""
+
+    def is_constructor_call(node: ast.AST) -> bool:
+        return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == constructor
+
+    @ast_handler("AnnAssign", pre=True)
+    def check_state_initializer(converter, node: ast.AnnAssign):
+        if is_constructor_call(node.value):
+            require_container_state_initializer(node, state_type, body=converter.current_body)
+
+    @ast_handler("Call", post=True)
+    def reject_local_constructor(converter, node: ast.Call, result):
+        if is_constructor_call(node):
+            reject_container_constructor(node, state_type)
+        return result
 
 
 def container_state_plan(host_type, variable) -> StatePlan:
