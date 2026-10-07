@@ -366,41 +366,24 @@ class InputValueAttributes(AttributeTemplate):
     key = InputValueType
 
     def generic_resolve(self, typ, attr):
-        from numba_cfunc_compiler.types.builtin.struct.native import StructPtrType
-
         if attr == "source":
             return typ.metadata_type
-        if isinstance(typ.payload_type, StructPtrType):
-            field = typ.payload_type.layout.get_field(attr)
-            if field is not None:
-                return field.numba_type
-        return None
+        return self.context.resolve_getattr(typ.payload_type, attr)
 
 
 @lower_getattr_generic(InputValueType)
 def input_value_getattr(context, builder, typ, value, attr):
-    from numba_cfunc_compiler.types.builtin.struct.native import StructPtrType
-
     wrapped = context.make_helper(builder, typ, value=value)
     if attr == "source":
         return wrapped.source
-    if isinstance(typ.payload_type, StructPtrType) and typ.payload_type.layout.get_field(attr) is not None:
-        return context.get_getattr(typ.payload_type, attr)(context, builder, typ.payload_type, wrapped.value, attr)
-    raise AttributeError(attr)
+    return context.get_getattr(typ.payload_type, attr)(context, builder, typ.payload_type, wrapped.value, attr)
 
 
 @lower_setattr_generic(InputValueType)
 def input_value_setattr(context, builder, sig, args, attr):
-    from numba_cfunc_compiler.types.builtin.struct.native import StructPtrType
-
     typ, value_type = sig.args
-    if not typ.mutable or not isinstance(typ.payload_type, StructPtrType):
+    if not typ.mutable:
         raise TypeError(f"{typ} does not allow field mutation")
-    field = typ.payload_type.layout.get_field(attr)
-    if field is None:
-        raise AttributeError(attr)
     wrapped = context.make_helper(builder, typ, value=args[0])
-    pointer = builder.bitcast(wrapped.value, ir.IntType(8).as_pointer())
-    pointer = builder.gep(pointer, [context.get_constant(types.intp, field.offset)])
-    pointer = builder.bitcast(pointer, context.get_value_type(field.numba_type).as_pointer())
-    builder.store(context.cast(builder, args[1], value_type, field.numba_type), pointer, align=1)
+    setter = context.get_setattr(attr, types.void(typ.payload_type, value_type))
+    return setter(builder, [wrapped.value, args[1]])
