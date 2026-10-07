@@ -66,10 +66,6 @@ class HostType(ABC):
         return None
 
     @classmethod
-    def lower_local_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
-        return None
-
-    @classmethod
     def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> ParameterInfo | None:
         return None
 

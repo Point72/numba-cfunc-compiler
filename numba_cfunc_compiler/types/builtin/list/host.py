@@ -8,9 +8,10 @@ from typing import Any, get_args, get_origin
 from numba_cfunc_compiler.api import NumbaList
 from numba_cfunc_compiler.core.analysis import ParameterInfo
 from numba_cfunc_compiler.core.names import container_ptr_name
+from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
-from numba_cfunc_compiler.types.builtin.container import container_state_plan
+from numba_cfunc_compiler.types.builtin.container import container_state_plan, reject_container_constructor, require_container_state_initializer
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, ListTypeMarker
 from numba_cfunc_compiler.types.registry import NumbaTypeRegistry
@@ -114,41 +115,6 @@ class ListHostType(HostType):
         return isinstance(var_type, ListTypeMarker)
 
     @classmethod
-    def create_local_from_type_name(cls, var_name: str, elem_type_name: str):
-        """Create AST statements for initializing a local list variable."""
-        allowed = {t.__name__: t for t in NumbaTypeRegistry.get_list_element_types()}
-        if elem_type_name not in allowed:
-            raise TypeError(f"Unsupported List element type: {elem_type_name}. Supported: {list(allowed.keys())}")
-        var_type = cls(ListTypeMarker(allowed[elem_type_name]))
-        return var_type.create_new_container(var_name), var_type
-
-    @classmethod
-    def lower_local_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
-        """Lower: l = create_new_list(int) → standalone list initialization"""
-        if not isinstance(rhs, ast.Call):
-            return None
-        if not isinstance(rhs.func, ast.Name):
-            return None
-        if rhs.func.id != "create_new_list":
-            return None
-        if not isinstance(node.targets[0], ast.Name):
-            return None
-
-        var_name = node.targets[0].id
-
-        if len(rhs.args) != 1:
-            raise TypeError(f"create_new_list expects exactly 1 argument (element type), got {len(rhs.args)}")
-
-        elem_type_node = rhs.args[0]
-        if isinstance(elem_type_node, ast.Name):
-            elem_type_name = elem_type_node.id
-        else:
-            raise TypeError(f"Unsupported List element type: {ast.dump(elem_type_node)}")
-
-        stmts, _ = cls.create_local_from_type_name(var_name, elem_type_name)
-        return stmts
-
-    @classmethod
     def _is_create_new_list_call(cls, value_node: ast.AST) -> bool:
         """Check if the value node is a create_new_list(...) call."""
         return isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name) and value_node.func.id == "create_new_list"
@@ -214,3 +180,14 @@ class ListHostType(HostType):
 def register() -> None:
     """Register the built-in list host adapter."""
     HostTypeFactory.register(ListHostType)
+
+    @ast_handler("AnnAssign", pre=True)
+    def _list_state_initializer(converter, node: ast.AnnAssign):
+        if ListHostType._is_create_new_list_call(node.value):
+            require_container_state_initializer(node, "NumbaList", body=converter.current_body)
+
+    @ast_handler("Call", post=True)
+    def _reject_local_list(converter, node: ast.Call, result):
+        if ListHostType._is_create_new_list_call(node):
+            reject_container_constructor(node, "NumbaList")
+        return result

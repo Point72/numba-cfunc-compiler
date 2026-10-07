@@ -32,17 +32,6 @@ class HostTypeFactory:
         raise TypeError(f"No registered HostType supports {var_type!r}")
 
     @classmethod
-    def lower_local_assignment(cls, node: ast.Assign, call_globals: dict) -> list[ast.stmt] | None:
-        rhs = node.value
-        if not isinstance(rhs, ast.Call) or not isinstance(rhs.func, ast.Name):
-            return None
-        for type_class in CompilationContext.current().type_classes:
-            result = type_class.lower_local_assignment(node, rhs, call_globals)
-            if result is not None:
-                return result
-        return None
-
-    @classmethod
     def try_parse_input(cls, param: inspect.Parameter, ann: Any) -> tuple[type[HostType], ParameterInfo] | None:
         for type_class in CompilationContext.current().type_classes:
             result = type_class.try_parse_input(param, ann)

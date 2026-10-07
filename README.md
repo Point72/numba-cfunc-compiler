@@ -343,8 +343,8 @@ Registered by `defaults.register_all()`:
 - **Primitives** — `int` (int64), `float` (float64), `bool` (int8). Support `State[int]`, etc.
 - **DateTime** — Stored as nanoseconds (int64). Constructor calls like `datetime(2020,1,1,tzinfo=timezone.utc)` are lowered to constants at compile time. Must be timezone-aware.
 - **TimeDelta** — Stored as nanoseconds (int64). `timedelta(seconds=5)` lowered to constants.
-- **NumbaList** — Standalone typed list (`int`/`float`/`bool` elements). Supports `len`, indexing, `append`, `pop`, `clear`, iteration. Created with `create_new_list(int)`.
-- **NumbaDict** — Standalone typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Created with `create_new_dict(int, float)`.
+- **NumbaList** — Standalone typed list (`int`/`float`/`bool` elements). Supports `len`, indexing, `append`, `pop`, `clear`, iteration. Initialize state with `values: State[NumbaList] = create_new_list(int)`.
+- **NumbaDict** — Standalone typed dict (`int` keys, `int`/`float`/`bool` values). Supports `len`, `[]`, `in`/`not in`, `get`, `pop`, `clear`, `items()`, `keys()`. Initialize state with `values: State[NumbaDict] = create_new_dict(int, float)`.
 - **Structs** — Opaque void pointers with field metadata. Read/write fields via pointer arithmetic. Base `StructHostType` must be subclassed with `is_type_supported()`, `get_struct_fields()`, `get_struct_size()`.
 
 The list, dict, struct, and enum families live under `types/builtin/<family>/`. `host.py` describes annotations and host storage, `native.py` defines Numba types and lowering, and `register.py` holds the family's default registrations where needed. Shared input, output, and state value machinery remains under `types/native/`.
@@ -476,4 +476,6 @@ def compiled_func(outputs, output_ticked, state, lifecycle_phase, ...):
 
 ### Standalone Containers
 
-`NumbaList` and `NumbaDict` use standalone C implementations (`runtime/_py_nrt_init.so`) instead of Numba's reference-counted runtime. Memory is owned by the host framework via state slots. The C library is loaded lazily on first compilation via `CompilationContext.ensure_nrt_loaded()`.
+`NumbaList` and `NumbaDict` use standalone C implementations (`runtime/_py_nrt_init.so`) instead of Numba's reference-counted runtime. State container memory is owned by the host framework via state slots. The C library is loaded lazily on first compilation via `CompilationContext.ensure_nrt_loaded()`.
+
+`create_new_list()` and `create_new_dict()` are supported only as direct initializers of matching `State[...]` declarations. State containers are freed on STOP. Assigning a state or input container to a local alias is supported; creating a new container in a local expression is rejected at compile time.

@@ -1,10 +1,13 @@
 """Compiled list and dict operations across the native callback boundary."""
 
+import ast
+
 import pytest
 from numba.core.errors import TypingError
 
 from numba_cfunc_compiler.api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
-from tests.harness import CompiledNode, Signal, compile_function, numba_node
+from numba_cfunc_compiler.core.compile import create_compiled_func
+from tests.harness import CompiledNode, Signal, compile_function, numba_node, setup_standalone_context
 
 
 @numba_node
@@ -91,30 +94,61 @@ def list_mutations(x: Signal[int]) -> Signal[int]:
 
 
 @numba_node
-def local_containers(x: Signal[int]) -> Signal[int]:
+def local_list(x: Signal[int]) -> Signal[int]:
     values = create_new_list(int)
+    return len(values) + x
+
+
+@numba_node
+def local_dict(x: Signal[int]) -> Signal[int]:
     mapping = create_new_dict(int, int)
-    values.append(x)
-    mapping[x] = x + 1
-    total = 0
-    for value in values:
-        total += value
-    for key, value in mapping.items():
-        total += key + value
-    return total
+    return len(mapping) + x
+
+
+@numba_node
+def annotated_local_list(x: Signal[int]) -> Signal[int]:
+    values: NumbaList[int] = create_new_list(int)
+    return len(values) + x
+
+
+@numba_node
+def chained_local_dict(x: Signal[int]) -> Signal[int]:
+    first = second = create_new_dict(int, int)
+    return len(first) + len(second) + x
+
+
+@numba_node
+def conditional_local_list(x: Signal[int]) -> Signal[int]:
+    if x > 0:
+        values = create_new_list(int)
+        return len(values)
+    return x
+
+
+@numba_node
+def expression_local_dict(x: Signal[int]) -> Signal[int]:
+    return x + len(create_new_dict(int, int))
+
+
+@numba_node
+def mismatched_state_constructor(x: Signal[int]) -> Signal[int]:
+    values: State[NumbaList] = create_new_dict(int, int)
+    return len(values) + x
 
 
 @numba_node
 def list_constant_total(x: Signal[int], values: NumbaList[int]) -> Signal[int]:
-    total = x + len(values)
-    for value in values:
+    alias = values
+    total = x + len(alias)
+    for value in alias:
         total += value
     return total
 
 
 @numba_node
 def dict_constant_lookup(x: Signal[int], values: NumbaDict[int, int]) -> Signal[int]:
-    return values.get(x, -1) + len(values)
+    alias = values
+    return alias.get(x, -1) + len(alias)
 
 
 @numba_node
@@ -127,11 +161,6 @@ def invalid_rebound_list_method(x: Signal[int]) -> Signal[int]:
 
 
 def test_container_operations():
-    local = CompiledNode(compile_function(local_containers), [int]).start()
-    assert local.execute([4]) == (13, True)
-    assert local.execute([5]) == (16, True)
-    local.stop()
-
     seen = CompiledNode(compile_function(dict_contains), [int]).start()
     assert [seen.execute([value])[0] for value in (1, 2, 1, 3, 2)] == [0, 0, 1, 0, 1]
     dict_aliases = CompiledNode(compile_function(dict_alias_iteration), [int]).start()
@@ -155,6 +184,40 @@ def test_container_operations():
     for node in (seen, dict_aliases, sums, dict_mutation_node, lengths, list_aliases, popped, list_mutation_node):
         node.stop()
         assert node._state[0] is None
+
+
+@pytest.mark.parametrize(
+    ("node", "constructor", "state_type"),
+    [
+        (local_list, "create_new_list", "NumbaList"),
+        (local_dict, "create_new_dict", "NumbaDict"),
+        (annotated_local_list, "create_new_list", "NumbaList"),
+        (chained_local_dict, "create_new_dict", "NumbaDict"),
+        (conditional_local_list, "create_new_list", "NumbaList"),
+        (expression_local_dict, "create_new_dict", "NumbaDict"),
+        (mismatched_state_constructor, "create_new_dict", "NumbaDict"),
+    ],
+)
+def test_container_constructors_require_matching_state(node, constructor, state_type):
+    with pytest.raises(TypeError, match=rf"{constructor}\(\).*State\[{state_type}\].*line \d+"):
+        compile_function(node)
+
+
+@pytest.mark.parametrize("body_name", ["start_body", "stop_body"])
+@pytest.mark.parametrize(
+    ("constructor", "arguments", "state_type"), [("create_new_list", "int", "NumbaList"), ("create_new_dict", "int, int", "NumbaDict")]
+)
+def test_container_constructors_are_rejected_in_lifecycle_bodies(body_name, constructor, arguments, state_type):
+    with (
+        setup_standalone_context(),
+        pytest.raises(TypeError, match=rf"{constructor}\(\).*State\[{state_type}\].*line \d+"),
+    ):
+        create_compiled_func(
+            list_append_len,
+            Signal(typ=int),
+            extract_python_type_fn=lambda signal: signal.get_type(),
+            **{body_name: ast.parse(f"local = {constructor}({arguments})").body},
+        )
 
 
 def test_constant_container_inputs():
