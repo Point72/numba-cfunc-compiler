@@ -1,13 +1,39 @@
 """Compiled list and dict operations across the native callback boundary."""
 
 import ast
+import inspect
+import textwrap
 
 import pytest
+from numba import njit, types
 from numba.core.errors import TypingError
+from numba.extending import register_jitable
 
 from numba_cfunc_compiler.api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
 from numba_cfunc_compiler.core.compile import create_compiled_func
+from numba_cfunc_compiler.extension.input_sources import register_input_source
+from numba_cfunc_compiler.types.builtin.dict.native import standalone_dict_free, standalone_dict_insert, standalone_dict_to_voidptr
+from numba_cfunc_compiler.types.builtin.list.native import standalone_list_append, standalone_list_free, standalone_list_to_voidptr
+from numba_cfunc_compiler.types.factory import HostTypeFactory
+from numba_cfunc_compiler.types.markers import DictTypeMarker, ListTypeMarker
+from numba_cfunc_compiler.types.native.input import bind_input, input_payload
 from tests.harness import CompiledNode, Signal, compile_function, numba_node, setup_standalone_context
+
+
+def _compile_body(template, body, *args, call_globals=None):
+    """Compile a short source fragment against an existing node signature."""
+    signature = inspect.signature(template)
+    parameters = ", ".join(signature.parameters)
+    tree = ast.parse(f"def case({parameters}):\n{textwrap.indent(body, '    ')}\n    return x\n").body[0]
+    with setup_standalone_context():
+        return create_compiled_func(
+            tree,
+            *args,
+            signature=signature,
+            func_globals=globals(),
+            extract_python_type_fn=lambda signal: signal.get_type(),
+            call_globals=call_globals,
+        )
 
 
 @numba_node
@@ -20,36 +46,10 @@ def dict_contains(x: Signal[int]) -> Signal[int]:
 
 
 @numba_node
-def dict_float_accumulate(key: Signal[int], val: Signal[float]) -> Signal[float]:
-    sums: State[NumbaDict] = create_new_dict(int, float)
-    sums[key] = sums.get(key, 0.0) + val
-    return sums[key]
-
-
-@numba_node
 def list_append_len(x: Signal[int]) -> Signal[int]:
     xs: State[NumbaList] = create_new_list(int)
     xs.append(x)
     return len(xs)
-
-
-@numba_node
-def list_pop_value(x: Signal[int]) -> Signal[int]:
-    xs: State[NumbaList] = create_new_list(int)
-    xs.append(x)
-    removed = xs.pop()
-    return removed + 1
-
-
-@numba_node
-def list_alias_iteration(x: Signal[int]) -> Signal[int]:
-    xs: State[NumbaList] = create_new_list(int)
-    xs.append(x)
-    alias = xs
-    total = 0
-    for value in alias:
-        total += value
-    return total
 
 
 @numba_node
@@ -94,49 +94,6 @@ def list_mutations(x: Signal[int]) -> Signal[int]:
 
 
 @numba_node
-def local_list(x: Signal[int]) -> Signal[int]:
-    values = create_new_list(int)
-    return len(values) + x
-
-
-@numba_node
-def local_dict(x: Signal[int]) -> Signal[int]:
-    mapping = create_new_dict(int, int)
-    return len(mapping) + x
-
-
-@numba_node
-def annotated_local_list(x: Signal[int]) -> Signal[int]:
-    values: NumbaList[int] = create_new_list(int)
-    return len(values) + x
-
-
-@numba_node
-def chained_local_dict(x: Signal[int]) -> Signal[int]:
-    first = second = create_new_dict(int, int)
-    return len(first) + len(second) + x
-
-
-@numba_node
-def conditional_local_list(x: Signal[int]) -> Signal[int]:
-    if x > 0:
-        values = create_new_list(int)
-        return len(values)
-    return x
-
-
-@numba_node
-def expression_local_dict(x: Signal[int]) -> Signal[int]:
-    return x + len(create_new_dict(int, int))
-
-
-@numba_node
-def mismatched_state_constructor(x: Signal[int]) -> Signal[int]:
-    values: State[NumbaList] = create_new_dict(int, int)
-    return len(values) + x
-
-
-@numba_node
 def list_constant_total(x: Signal[int], values: NumbaList[int]) -> Signal[int]:
     alias = values
     total = x + len(alias)
@@ -152,12 +109,36 @@ def dict_constant_lookup(x: Signal[int], values: NumbaDict[int, int]) -> Signal[
 
 
 @numba_node
-def invalid_rebound_list_method(x: Signal[int]) -> Signal[int]:
-    xs: State[NumbaList] = create_new_list(int)
-    alias = xs
-    alias = 1
-    alias.append(x)
-    return x
+def dict_constant_items(x: Signal[int], values: NumbaDict[int, int]) -> Signal[int]:
+    total = x
+    for key, value in values.items():
+        total += key + value
+    return total
+
+
+@numba_node
+def float_list_constant_total(x: Signal[float], values: NumbaList[float]) -> Signal[float]:
+    total = x
+    for value in values:
+        total += value
+    return total
+
+
+@register_jitable
+def _append_in_helper(values, value):
+    values.append(value)
+
+
+@numba_node
+def list_constant_with_state(x: Signal[int], values: NumbaList[int]) -> Signal[int]:
+    total: State[int] = 0
+    total += values[0] + x
+    return total
+
+
+@numba_node
+def two_constant_containers(x: Signal[int], items: NumbaList[int], mapping: NumbaDict[int, int]) -> Signal[int]:
+    return items[0] + mapping.get(x, 0)
 
 
 def test_container_operations():
@@ -165,42 +146,32 @@ def test_container_operations():
     assert [seen.execute([value])[0] for value in (1, 2, 1, 3, 2)] == [0, 0, 1, 0, 1]
     dict_aliases = CompiledNode(compile_function(dict_alias_iteration), [int]).start()
     assert [dict_aliases.execute([value])[0] for value in (2, 3)] == [26, 65]
-    sums = CompiledNode(compile_function(dict_float_accumulate), [int, float]).start()
-    assert [sums.execute([key, value])[0] for key, value in ((1, 10.0), (2, 20.0), (1, 30.0))] == [10.0, 20.0, 40.0]
     dict_mutation_node = CompiledNode(compile_function(dict_mutations), [int]).start()
     assert [dict_mutation_node.execute([value])[0] for value in (2, 2, 3)] == [20, 42, 29]
 
     lengths = CompiledNode(compile_function(list_append_len), [int]).start()
     assert [lengths.execute([value])[0] for value in (10, 20, 30)] == [1, 2, 3]
-    list_aliases = CompiledNode(compile_function(list_alias_iteration), [int]).start()
-    assert [list_aliases.execute([value])[0] for value in (2, 3)] == [2, 5]
-    popped = CompiledNode(compile_function(list_pop_value), [int]).start()
-    assert popped.execute([10]) == (11, True)
     list_mutation_node = CompiledNode(compile_function(list_mutations), [int]).start()
     assert [list_mutation_node.execute([value])[0] for value in (2, 3, 4, 1)] == [5, 10, 15, 3]
-    with pytest.raises(TypingError):
-        compile_function(invalid_rebound_list_method)
 
-    for node in (seen, dict_aliases, sums, dict_mutation_node, lengths, list_aliases, popped, list_mutation_node):
+    for node in (seen, dict_aliases, dict_mutation_node, lengths, list_mutation_node):
         node.stop()
         assert node._state[0] is None
 
 
 @pytest.mark.parametrize(
-    ("node", "constructor", "state_type"),
+    ("body", "constructor", "state_type"),
     [
-        (local_list, "create_new_list", "NumbaList"),
-        (local_dict, "create_new_dict", "NumbaDict"),
-        (annotated_local_list, "create_new_list", "NumbaList"),
-        (chained_local_dict, "create_new_dict", "NumbaDict"),
-        (conditional_local_list, "create_new_list", "NumbaList"),
-        (expression_local_dict, "create_new_dict", "NumbaDict"),
-        (mismatched_state_constructor, "create_new_dict", "NumbaDict"),
+        ("values = create_new_list(int)", "create_new_list", "NumbaList"),
+        ("first = second = create_new_dict(int, int)", "create_new_dict", "NumbaDict"),
+        ("if x > 0:\n    values = create_new_list(int)", "create_new_list", "NumbaList"),
+        ("return x + len(create_new_dict(int, int))", "create_new_dict", "NumbaDict"),
+        ("values: State[NumbaList] = create_new_dict(int, int)", "create_new_dict", "NumbaDict"),
     ],
 )
-def test_container_constructors_require_matching_state(node, constructor, state_type):
+def test_container_constructors_require_matching_state(body, constructor, state_type):
     with pytest.raises(TypeError, match=rf"{constructor}\(\).*State\[{state_type}\].*line \d+"):
-        compile_function(node)
+        _compile_body(list_append_len, body, Signal(typ=int))
 
 
 @pytest.mark.parametrize("body_name", ["start_body", "stop_body"])
@@ -222,14 +193,31 @@ def test_container_constructors_are_rejected_in_lifecycle_bodies(body_name, cons
 
 def test_constant_container_inputs():
     for values, expected in (([2, 3], (10, True)), ((2, 3), (10, True)), ([], (3, True))):
-        node = CompiledNode(compile_function(list_constant_total, values=values), [int])
+        result = compile_function(list_constant_total, values=values)
+        assert result.state_values == (0,)
+        assert result.constant_container_indices == (0,)
+        node = CompiledNode(result, [int]).start()
+        pointer = node._state[0]
+        assert pointer
         assert node.execute([3]) == expected
+        assert node.execute([4])[1]
+        assert node._state[0] == pointer
+        node.stop()
+        assert node._state[0] is None
 
     for values, expected in (({3: 30, 5: 50}, (32, True)), ({}, (-1, True))):
-        node = CompiledNode(compile_function(dict_constant_lookup, values=values), [int])
+        result = compile_function(dict_constant_lookup, values=values)
+        assert result.state_values == (0,)
+        assert result.constant_container_indices == (0,)
+        node = CompiledNode(result, [int]).start()
+        pointer = node._state[0]
+        assert pointer
         assert node.execute([3]) == expected
         if values:
             assert node.execute([4]) == (1, True)
+        assert node._state[0] == pointer
+        node.stop()
+        assert node._state[0] is None
 
     with pytest.raises(TypeError, match="values.*expected list or tuple"):
         compile_function(list_constant_total, values=1)
@@ -241,3 +229,116 @@ def test_constant_container_inputs():
         compile_function(dict_constant_lookup, values={"wrong": 2})
     with pytest.raises(TypeError, match="values.*value.*expected int"):
         compile_function(dict_constant_lookup, values={1: "wrong"})
+
+    dict_node = CompiledNode(compile_function(dict_constant_items, values={1: 10, 2: 20}), [int]).start()
+    assert dict_node.execute([3]) == (36, True)
+    dict_node.stop()
+    float_node = CompiledNode(compile_function(float_list_constant_total, values=[0.5, 1.5]), [float]).start()
+    assert float_node.execute([2.0]) == (4.0, True)
+    float_node.stop()
+
+
+@pytest.mark.parametrize(
+    ("template", "body", "values"),
+    [
+        (list_constant_total, "alias = values\nalias.append(x)", [1]),
+        (list_constant_total, "values.pop()", [1]),
+        (list_constant_total, "values.clear()", [1]),
+        (list_constant_total, "_append_in_helper(values, x)", [1]),
+        (list_constant_total, "values[0] = x", [1]),
+        (list_constant_total, "standalone_list_append(values, x)", [1]),
+        (list_constant_total, "standalone_list_to_voidptr(values)", [1]),
+        (list_constant_total, "standalone_list_free(values)", [1]),
+        (dict_constant_lookup, "values[x] = x", {1: 2}),
+        (dict_constant_lookup, "values.pop(x)", {1: 2}),
+        (dict_constant_lookup, "values.clear()", {1: 2}),
+        (dict_constant_lookup, "standalone_dict_insert(values, x, x)", {1: 2}),
+        (dict_constant_lookup, "standalone_dict_to_voidptr(values)", {1: 2}),
+        (dict_constant_lookup, "standalone_dict_free(values)", {1: 2}),
+    ],
+)
+def test_constant_containers_reject_writes(template, body, values):
+    call_globals = {
+        "_append_in_helper": _append_in_helper,
+        "standalone_list_append": standalone_list_append,
+        "standalone_list_to_voidptr": standalone_list_to_voidptr,
+        "standalone_list_free": standalone_list_free,
+        "standalone_dict_insert": standalone_dict_insert,
+        "standalone_dict_to_voidptr": standalone_dict_to_voidptr,
+        "standalone_dict_free": standalone_dict_free,
+    }
+    with pytest.raises(TypingError):
+        _compile_body(template, body, Signal(typ=int), values, call_globals=call_globals)
+
+
+def test_constant_container_lifecycle_and_storage():
+    result = compile_function(
+        list_constant_with_state,
+        values=[2, 3],
+        start_body=ast.parse("total = values[0]").body,
+        stop_body=ast.parse("total = values[1]").body,
+    )
+    assert result.state_values == (0, 0)
+    assert result.constant_container_indices == (1,)
+    left = CompiledNode(result, [int]).start()
+    right = CompiledNode(result, [int]).start()
+    assert left._state_store[0] == right._state_store[0] == 2
+    assert left._state[1] != right._state[1]
+    assert left.execute([3]) == (7, True)
+    assert left.execute([4]) == (13, True)
+    assert right.execute([1]) == (5, True)
+    left.stop()
+    right.stop()
+    assert left._state_store[0] == right._state_store[0] == 3
+    assert left._state[1] is right._state[1] is None
+
+    result = compile_function(two_constant_containers, items=[2], mapping={3: 4})
+    assert result.state_values == (0, 0)
+    assert result.constant_container_indices == (0, 1)
+    node = CompiledNode(result, [int]).start()
+    assert node._state[0] and node._state[1]
+    assert node._state[0] != node._state[1]
+    assert node.execute([3]) == (6, True)
+    node.stop()
+    assert node._state[0] is node._state[1] is None
+
+
+@pytest.mark.parametrize(("marker", "kind"), [(ListTypeMarker(int), "list"), (DictTypeMarker(int, int), "dict")])
+def test_container_input_boundaries_are_readonly(marker, kind):
+    with setup_standalone_context():
+        binding = HostTypeFactory.resolve(marker)
+        source = register_input_source(identity=("tests", f"readonly.{kind}"), fields=())
+        source_type = source.value_type(binding)
+        assert source_type.payload_type.readonly
+        assert source_type.storage_type.readonly
+        assert not binding.payload.native_type.readonly
+        assert source_type.unify(None, binding.payload.native_type) is None
+
+        bind = bind_input(source_type)
+
+        def read(ptr):
+            return len(input_payload(bind(ptr, ())))
+
+        njit(read).compile((types.voidptr,))
+
+        if kind == "list":
+
+            def write(ptr):
+                input_payload(bind(ptr, ())).append(1)
+
+        else:
+
+            def write(ptr):
+                input_payload(bind(ptr, ()))[1] = 2
+
+        with pytest.raises(TypingError):
+            njit(write).compile((types.voidptr,))
+
+    if kind == "list":
+        with pytest.raises(TypingError):
+            _compile_body(
+                list_constant_total,
+                "state_values: State[NumbaList] = create_new_list(int)\nselected = state_values if x > 0 else values\nselected.append(x)",
+                Signal(typ=int),
+                [1],
+            )

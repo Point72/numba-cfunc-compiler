@@ -24,6 +24,7 @@ class NumbaFunctionInfo:
         extract_python_type_fn: Callable[[Any], type],
         decorator_name: str,
         func_globals: dict | None = None,
+        call_globals: dict | None = None,
         signature: inspect.Signature | None = None,
         **kwargs,
     ):
@@ -45,6 +46,7 @@ class NumbaFunctionInfo:
         self.func = func
         self.analyzer = FunctionAnalyzer()
         self.extract_python_type_fn = extract_python_type_fn
+        self.call_globals = dict(call_globals or {})
 
         # Use try/except to re-throw with additional info (numba_node function name)
         try:
@@ -77,6 +79,8 @@ class NumbaFunctionInfo:
         self.variable_factory, self.component_metadata = self._create_variable_factory()
 
     def _create_variable_factory(self) -> tuple[VariableFactory, dict[str, Any]]:
+        from numba_cfunc_compiler.core.variable_access import ConstantAccess
+
         variable_factory = VariableFactory()
         component_inputs = ComponentInputs(
             input_analysis=self.input_analysis,
@@ -87,6 +91,16 @@ class NumbaFunctionInfo:
         metadata = {}
         for component in ComponentRegistry.get_ordered():
             metadata.update(component.create_variables(component_inputs, variable_factory))
+        # Constant containers live from START to STOP, so give each instance a
+        # hidden pointer slot after its declared state slots.
+        state_values = list(metadata.get("state_values", ()))
+        constant_indices = []
+        for variable in variable_factory.get_accesses(ConstantAccess):
+            plan = variable.prepare_plan(self.call_globals, len(state_values))
+            constant_indices.extend(range(len(state_values), len(state_values) + plan.state_slots))
+            state_values.extend((0,) * plan.state_slots)
+        metadata["state_values"] = tuple(state_values)
+        metadata["constant_container_indices"] = tuple(constant_indices)
         return variable_factory, metadata
 
 

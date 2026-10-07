@@ -7,11 +7,16 @@ from typing import Any, get_args, get_origin
 
 from numba_cfunc_compiler.api import NumbaList
 from numba_cfunc_compiler.core.analysis import ParameterInfo
-from numba_cfunc_compiler.core.names import container_ptr_name
+from numba_cfunc_compiler.core.names import container_ptr_name, state_init_name
 from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
-from numba_cfunc_compiler.types.builtin.container import container_state_plan, reject_container_constructor, require_container_state_initializer
+from numba_cfunc_compiler.types.builtin.container import (
+    container_constant_plan,
+    container_state_plan,
+    reject_container_constructor,
+    require_container_state_initializer,
+)
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, ListTypeMarker
 from numba_cfunc_compiler.types.registry import NumbaTypeRegistry
@@ -59,11 +64,12 @@ class ListHostType(HostType):
                     "standalone_list_from_voidptr",
                     ast.Name(id=ptr_name, ctx=ast.Load()),
                     ast.Constant(value=self._elem_type_name()),
+                    ast.Constant(value=False),
                 ),
             ),
         ]
 
-    def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST) -> ast.AST:
+    def from_voidptr(self, local_var_name: str, var_name: str, loaded_value: ast.AST, readonly: bool = False) -> ast.AST:
         """Cast voidptr back to typed standalone list."""
         return AST.assignment(
             local_var_name,
@@ -71,6 +77,7 @@ class ListHostType(HostType):
                 "standalone_list_from_voidptr",
                 loaded_value,
                 ast.Constant(value=self._elem_type_name()),
+                ast.Constant(value=readonly),
             ),
         )
 
@@ -83,22 +90,20 @@ class ListHostType(HostType):
     def is_opaque_pointer(self) -> bool:
         return True
 
-    def constant_plan(self, local_var_name: str, value: Any, call_globals: dict) -> ConstantPlan:
-        """Create a standalone list and populate it with constant values."""
+    def constant_plan(self, local_var_name: str, value: Any, call_globals: dict, slot_index: int) -> ConstantPlan:
+        """Populate a list once in START and bind it read-only thereafter."""
         values = list(value)
         if not isinstance(self.value, ListTypeMarker):
             raise TypeError(f"Expected ListTypeMarker, got {type(self.value)}")
 
-        # Create the list using the type's create_new_container method
-        stmts = self.create_new_container(local_var_name)
-
-        # Append each value
+        init_name = state_init_name(local_var_name)
+        populate = []
         for v in values:
-            stmts.append(
+            populate.append(
                 ast.Expr(
                     value=ast.Call(
                         func=ast.Attribute(
-                            value=ast.Name(id=local_var_name, ctx=ast.Load()),
+                            value=ast.Name(id=init_name, ctx=ast.Load()),
                             attr="append",
                             ctx=ast.Load(),
                         ),
@@ -108,7 +113,7 @@ class ListHostType(HostType):
                 )
             )
 
-        return ConstantPlan(tuple(stmts), ast.Name(id=local_var_name, ctx=ast.Load()))
+        return container_constant_plan(self, local_var_name, slot_index, populate)
 
     @classmethod
     def is_type_supported(cls, var_type: Any) -> bool:

@@ -27,7 +27,8 @@ class HostType(ABC):
     def is_opaque_pointer(self) -> bool:
         return False
 
-    def constant_plan(self, name: str, value: Any, call_globals: dict) -> ConstantPlan:
+    def constant_plan(self, name: str, value: Any, call_globals: dict, slot_index: int) -> ConstantPlan:
+        """Build a constant; report slots claimed from ``slot_index`` in the plan."""
         return ConstantPlan((AST.assignment(name, ast.Constant(value=value)),), ast.Constant(value=value))
 
     def slot_read(self, name: str, slot: ast.expr, variable_factory) -> ast.stmt | list[ast.stmt]:
