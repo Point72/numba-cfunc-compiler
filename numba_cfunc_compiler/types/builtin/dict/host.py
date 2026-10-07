@@ -8,9 +8,10 @@ from typing import Any, get_args, get_origin
 from numba_cfunc_compiler.api import NumbaDict
 from numba_cfunc_compiler.core.analysis import ParameterInfo
 from numba_cfunc_compiler.core.names import container_ptr_name
+from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
-from numba_cfunc_compiler.types.builtin.container import container_state_plan
+from numba_cfunc_compiler.types.builtin.container import container_state_plan, reject_container_constructor, require_container_state_initializer
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, DictTypeMarker
 from numba_cfunc_compiler.types.registry import NumbaTypeRegistry
@@ -120,49 +121,6 @@ class DictHostType(HostType):
         return isinstance(var_type, DictTypeMarker)
 
     @classmethod
-    def create_local_from_type_names(cls, var_name: str, key_type_name: str, val_type_name: str):
-        """Create AST statements for initializing a local dict variable."""
-        allowed_keys = {t.__name__: t for t in NumbaTypeRegistry.get_dict_key_types()}
-        allowed_vals = {t.__name__: t for t in NumbaTypeRegistry.get_dict_value_types()}
-        if key_type_name not in allowed_keys:
-            raise TypeError(f"Unsupported Dict key type: {key_type_name}. Supported: {list(allowed_keys.keys())}")
-        if val_type_name not in allowed_vals:
-            raise TypeError(f"Unsupported Dict value type: {val_type_name}. Supported: {list(allowed_vals.keys())}")
-        var_type = cls(DictTypeMarker(allowed_keys[key_type_name], allowed_vals[val_type_name]))
-        return var_type.create_new_container(var_name), var_type
-
-    @classmethod
-    def lower_local_assignment(cls, node: ast.Assign, rhs: ast.AST, call_globals: dict) -> list[ast.stmt] | None:
-        """Lower: d = create_new_dict(int, float) → standalone dict initialization"""
-        if not isinstance(rhs, ast.Call):
-            return None
-        if not isinstance(rhs.func, ast.Name):
-            return None
-        if rhs.func.id != "create_new_dict":
-            return None
-        if not isinstance(node.targets[0], ast.Name):
-            return None
-
-        var_name = node.targets[0].id
-
-        if len(rhs.args) != 2:
-            raise TypeError(f"create_new_dict expects exactly 2 arguments (key_type, value_type), got {len(rhs.args)}")
-
-        key_type_node = rhs.args[0]
-        val_type_node = rhs.args[1]
-
-        def get_type_name(type_node):
-            if isinstance(type_node, ast.Name):
-                return type_node.id
-            raise TypeError(f"Unsupported type: {ast.dump(type_node)}")
-
-        key_type_name = get_type_name(key_type_node)
-        val_type_name = get_type_name(val_type_node)
-
-        stmts, _ = cls.create_local_from_type_names(var_name, key_type_name, val_type_name)
-        return stmts
-
-    @classmethod
     def _is_create_new_dict_call(cls, value_node: ast.AST) -> bool:
         """Check if the value node is a create_new_dict(...) call."""
         return isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name) and value_node.func.id == "create_new_dict"
@@ -242,3 +200,14 @@ class DictHostType(HostType):
 def register() -> None:
     """Register the built-in dictionary host adapter."""
     HostTypeFactory.register(DictHostType)
+
+    @ast_handler("AnnAssign", pre=True)
+    def _dict_state_initializer(converter, node: ast.AnnAssign):
+        if DictHostType._is_create_new_dict_call(node.value):
+            require_container_state_initializer(node, "NumbaDict", body=converter.current_body)
+
+    @ast_handler("Call", post=True)
+    def _reject_local_dict(converter, node: ast.Call, result):
+        if DictHostType._is_create_new_dict_call(node):
+            reject_container_constructor(node, "NumbaDict")
+        return result

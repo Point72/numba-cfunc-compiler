@@ -10,8 +10,30 @@ from numba_cfunc_compiler.core.names import (
     state_slot_name,
     state_value_name,
 )
+from numba_cfunc_compiler.extension.ast import LifecycleBody
 from numba_cfunc_compiler.types.binding import StatePlan
 from numba_cfunc_compiler.utils.ast import AST
+
+
+def require_container_state_initializer(node: ast.AnnAssign, expected_type: str, *, body: LifecycleBody | None) -> None:
+    """A constructor declaration must match its persistent state type."""
+    if body is LifecycleBody.EXECUTE and isinstance(node.target, ast.Name):
+        annotation = node.annotation
+        if isinstance(annotation, ast.Subscript) and isinstance(annotation.value, ast.Name) and annotation.value.id == "State":
+            declared_type = annotation.slice
+            if isinstance(declared_type, ast.Subscript):
+                declared_type = declared_type.value
+            if isinstance(declared_type, ast.Name) and declared_type.id == expected_type:
+                return
+    reject_container_constructor(node.value, expected_type)
+
+
+def reject_container_constructor(call: ast.Call, expected_type: str) -> None:
+    """Report a constructor call that cannot be owned by persistent state."""
+    raise TypeError(
+        f"{call.func.id}() is only supported as a State[{expected_type}] initializer "
+        f"at line {getattr(call, 'lineno', '?')}; standalone container locals have no cleanup"
+    )
 
 
 def container_state_plan(host_type, variable) -> StatePlan:
