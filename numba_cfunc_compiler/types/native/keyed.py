@@ -215,45 +215,31 @@ def overload_keyed_len(value):
         return impl
 
 
-def _iterable(value, name):
-    return value
-
-
-@overload(_iterable)
-def overload_iterable(value, name):
-    if not isinstance(value, KeyedValueType) or not isinstance(name, types.StringLiteral):
-        return None
-    filter = value.descriptor._iter_methods.get(name.literal_value)
-    if filter is None:
-        return None
-    iterable_type = KeyedIterableType(value, filter)
-
-    @intrinsic
-    def cast(typingctx, source):
-        if source != value:
-            return None
-        sig = iterable_type(source)
-
-        def codegen(context, builder, signature, args):
-            return args[0]
-
-        return sig, codegen
-
-    def impl(value, name):
-        return cast(value)
-
-    return impl
-
-
 def register_iter_method(owner, name):
-    namespace = {"_iterable": _iterable}
-    exec(f"def impl(value):\n    return _iterable(value, {name!r})\n", namespace)  # noqa: S102 - validated method identifier
-
     @overload_method(owner, name)
     def overload_iter_method(value):
-        if isinstance(value, owner):
-            return namespace["impl"]
-        return None
+        if not isinstance(value, owner):
+            return None
+        filter = value.descriptor._iter_methods.get(name)
+        if filter is None:
+            return None
+        iterable_type = KeyedIterableType(value, filter)
+
+        @intrinsic
+        def cast(typingctx, source):
+            if source != value:
+                return None
+            sig = iterable_type(source)
+
+            def codegen(context, builder, signature, args):
+                return args[0]
+
+            return sig, codegen
+
+        def impl(value):
+            return cast(value)
+
+        return impl
 
 
 @lower_builtin("getiter", KeyedValueType)
