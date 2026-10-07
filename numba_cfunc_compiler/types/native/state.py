@@ -1,16 +1,17 @@
 """Native types and bind/store operations for host-owned state cells."""
 
 import ctypes
+import operator
 from dataclasses import dataclass
 from functools import cache
 
 from llvmlite import ir as llvm_ir
 from numba import types
 from numba.core.errors import TypingError
-from numba.extending import intrinsic, lower_cast, models, register_model
+from numba.extending import intrinsic, lower_builtin, lower_cast, models, overload, register_model
 
 from numba_cfunc_compiler.types.builtin.struct.native import StructLayout, struct_ptr_type, struct_view
-from numba_cfunc_compiler.types.native.input import InputValueType
+from numba_cfunc_compiler.types.native.input import InputValueType, input_payload
 from numba_cfunc_compiler.types.policy import ValueSemantics
 
 
@@ -29,7 +30,9 @@ class CopyStateValueType(types.Type):
     def key(self):
         return (self.nominal_key, self.payload_type, self.storage_type, self.size, self.alignment)
 
-    def can_convert_to(self, typingctx, other):
+    def unify(self, typingctx, other):
+        if other == self.payload_type or (isinstance(other, (InputValueType, CopyStateValueType)) and self.payload_type == other.payload_type):
+            return self.payload_type
         return None
 
 
@@ -39,11 +42,30 @@ class CopyStateValueModel(models.StructModel):
         super().__init__(dmm, fe_type, [("slot", types.voidptr), ("value", fe_type.payload_type)])
 
 
+@lower_cast(CopyStateValueType, types.Boolean)
 @lower_cast(CopyStateValueType, types.Type)
 def lower_copy_state_value_cast(context, builder, from_type, to_type, value):
     if to_type != from_type.payload_type:
         raise TypingError(f"Cannot convert {from_type} to {to_type}")
     return context.make_helper(builder, from_type, value=value).value
+
+
+@lower_builtin(bool, CopyStateValueType)
+def copy_state_value_bool(context, builder, signature, args):
+    value_type = signature.args[0]
+    value = context.make_helper(builder, value_type, value=args[0]).value
+    return context.cast(builder, value, value_type.payload_type, types.boolean)
+
+
+@overload(operator.truth)
+def copy_state_truth(value):
+    if not isinstance(value, CopyStateValueType):
+        return None
+
+    def impl(value):
+        return bool(input_payload(value))
+
+    return impl
 
 
 @dataclass(frozen=True)
