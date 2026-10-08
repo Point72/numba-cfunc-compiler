@@ -8,14 +8,12 @@ from typing import Any, get_args, get_origin
 from numba_cfunc_compiler.api import NumbaDict
 from numba_cfunc_compiler.core.analysis import ParameterInfo
 from numba_cfunc_compiler.core.names import container_ptr_name, state_init_name
-from numba_cfunc_compiler.extension.ast import ast_handler
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.binding import ConstantPlan
 from numba_cfunc_compiler.types.builtin.container import (
     container_constant_plan,
     container_state_plan,
-    reject_container_constructor,
-    require_container_state_initializer,
+    ensure_no_local,
 )
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.markers import CONTAINER_STATE_INIT, DictTypeMarker
@@ -205,14 +203,4 @@ class DictHostType(HostType):
 def register() -> None:
     """Register the built-in dictionary host adapter."""
     HostTypeFactory.register(DictHostType)
-
-    @ast_handler("AnnAssign", pre=True)
-    def _dict_state_initializer(converter, node: ast.AnnAssign):
-        if DictHostType._is_create_new_dict_call(node.value):
-            require_container_state_initializer(node, "NumbaDict", body=converter.current_body)
-
-    @ast_handler("Call", post=True)
-    def _reject_local_dict(converter, node: ast.Call, result):
-        if DictHostType._is_create_new_dict_call(node):
-            reject_container_constructor(node, "NumbaDict")
-        return result
+    ensure_no_local("create_new_dict", "NumbaDict")

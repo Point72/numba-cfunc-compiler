@@ -18,7 +18,7 @@ from numba_cfunc_compiler.core.defaults import register_all
 from numba_cfunc_compiler.extension.callback_components import ComponentRegistry
 from numba_cfunc_compiler.extension.methods import forward_value_method
 from numba_cfunc_compiler.types.builtin.enum.host import register_enum_family
-from numba_cfunc_compiler.types.builtin.struct.host import StructFieldInfo, StructHostType
+from numba_cfunc_compiler.types.builtin.struct.host import StructFieldInfo
 from numba_cfunc_compiler.types.builtin.struct.native import StructField, StructLayout, StructPtrType, struct_ptr_type, struct_view
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from tests.harness import (
@@ -30,6 +30,7 @@ from tests.harness import (
     SingleSignalOutputHandler,
     numba_node,
 )
+from tests.helpers import CtypesStructHostType
 
 
 class Quote(ctypes.Structure):
@@ -49,36 +50,17 @@ class PackedQuote(ctypes.Structure):
     _fields_ = [("tag", ctypes.c_int8), ("price", ctypes.c_double)]
 
 
-class TypedQuoteType(StructHostType):
+class TypedQuoteType(CtypesStructHostType):
     storage_type = Quote
-
-    @classmethod
-    def is_type_supported(cls, var_type):
-        return var_type is Quote
-
-    @classmethod
-    def get_struct_fields(cls, var_type):
-        storage = cls.storage_type
-        return {
-            "price": StructFieldInfo("price", storage.price.offset, "float64", 8),
-            "count": StructFieldInfo("count", storage.count.offset, "int64", 8),
-        }
-
-    @classmethod
-    def get_struct_size(cls, var_type):
-        return ctypes.sizeof(cls.storage_type)
 
 
 class ReorderedTypedQuoteType(TypedQuoteType):
     storage_type = ReorderedQuote
+    accepted_type = Quote
 
 
 class OtherTypedQuoteType(TypedQuoteType):
     storage_type = OtherQuote
-
-    @classmethod
-    def is_type_supported(cls, var_type):
-        return var_type is OtherQuote
 
 
 @register_jitable(inline="always")
