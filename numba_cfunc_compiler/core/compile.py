@@ -26,6 +26,7 @@ from numba_cfunc_compiler.core.postprocess import (
     apply_post_compilation,
 )
 from numba_cfunc_compiler.extension.callback_components import ComponentRegistry
+from numba_cfunc_compiler.numba_methods import NumbaMethodManager
 from numba_cfunc_compiler.types.builtin.dict.native import (
     standalone_dict_free,
     standalone_dict_from_voidptr,
@@ -87,6 +88,7 @@ def build_semantic_key(
     output_bindings_key: tuple = (),
     keyed_input_bindings_key: tuple = (),
     method_bindings_key: tuple = (),
+    method_hashes: dict[str, str] | None = None,
 ) -> str:
     payload = {
         "compiler_implementation_version": COMPILER_IMPLEMENTATION_VERSION,
@@ -105,6 +107,8 @@ def build_semantic_key(
         payload["keyed_input_bindings"] = keyed_input_bindings_key
     if method_bindings_key:
         payload["method_bindings"] = method_bindings_key
+    if method_hashes:
+        payload["numba_methods"] = method_hashes
     payload["compiler_pipeline"] = {
         "numba": numba.__version__,
         "python": sys.version_info[:2],
@@ -174,6 +178,12 @@ def create_compiled_func(
     input_bindings = tuple((var.name, var.input_value_type()) for var in variable_factory.get_accesses(SourceAccess))
     output_bindings = tuple((var.array_idx, var.output_sink_type()) for var in variable_factory.get_accesses(OutputAccess))
     state_bindings_key = tuple((var.name, var.array_idx, state_payloads[var.name].key) for var in state_vars)
+    helper_globals = dict(info.func_globals)
+    if call_globals:
+        helper_globals.update(call_globals)
+    if callable(info.func) and not isinstance(info.func, ast.FunctionDef):
+        helper_globals.update(inspect.getclosurevars(info.func).nonlocals)
+    method_manager = NumbaMethodManager(variable_factory)
 
     # Lazy-load the NRT C library on first compilation
     CompilationContext.current().ensure_nrt_loaded()
@@ -184,8 +194,9 @@ def create_compiled_func(
         start_body=start_body,
         stop_body=stop_body,
         call_globals=info.call_globals,
-        host_globals=info.func_globals,
+        host_globals=helper_globals,
         state_names=frozenset(state_payloads),
+        method_manager=method_manager,
     )
     new_tree = transformer.visit(tree)
     new_func_code = ast.unparse(new_tree)
@@ -228,6 +239,7 @@ def create_compiled_func(
         tuple((idx, sink_type.name) for idx, sink_type in output_bindings),
         (tuple((name, value_type.name) for name, value_type in (*keyed_input_bindings, *keyed_basket_bindings)), basket_registrations),
         method_bindings_key,
+        method_manager.hashes,
     )
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
@@ -276,6 +288,7 @@ def create_compiled_func(
     exec_globals.update({bind_output_name(idx): bind_output(sink_type) for idx, sink_type in output_bindings})
     exec_globals.update({bind_state_name(name): payload.bind_function for name, payload in state_payloads.items()})
     exec_globals.update({state_store_name(name): payload.store_function(name) for name, payload in state_payloads.items()})
+    exec_globals.update(method_manager.build_bindings(exec_globals))
     exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
 
     compiled_func = exec_globals[name]
