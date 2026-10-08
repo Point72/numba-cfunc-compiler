@@ -21,16 +21,23 @@ class FFIRefType(types.Type):
         return self.ref_name
 
 
-class FFISideRefType(types.Type):
-    """A side pointer and the selector required by side-specific C symbols."""
+class FFITaggedRefType(types.Type):
+    """A borrowed pointer and an integer selecting a native API variant."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, cases: tuple[str, ...]):
         self.ref_name = name
-        super().__init__(f"FFISideRef[{name}]")
+        self.cases = cases
+        super().__init__(f"FFITaggedRef[{name}:{','.join(cases)}]")
 
     @property
     def key(self):
-        return self.ref_name
+        return self.ref_name, self.cases
+
+    def tag(self, name: str) -> int:
+        try:
+            return self.cases.index(name)
+        except ValueError as exc:
+            raise ValueError(f"Unknown case {name!r} for {self}") from exc
 
 
 class FFIRangeType(types.IterableType):
@@ -64,10 +71,10 @@ class FFIRefModel(models.PrimitiveModel):
         super().__init__(dmm, fe_type, ir.IntType(8).as_pointer())
 
 
-@register_model(FFISideRefType)
-class FFISideRefModel(models.StructModel):
+@register_model(FFITaggedRefType)
+class FFITaggedRefModel(models.StructModel):
     def __init__(self, dmm, fe_type):
-        super().__init__(dmm, fe_type, [("pointer", types.voidptr), ("bid", types.boolean)])
+        super().__init__(dmm, fe_type, [("pointer", types.voidptr), ("tag", types.int32)])
 
 
 @register_model(FFIRangeType)
@@ -90,24 +97,43 @@ def ffi_ref_type(name: str):
 
 
 @cache
-def ffi_side_ref_type(name: str):
-    if not name.isidentifier():
-        raise ValueError("FFI side reference requires an identifier")
-    return FFISideRefType(name)
+def ffi_tagged_ref_type(name: str, cases: tuple[str, ...]):
+    if (
+        not isinstance(name, str)
+        or not name.isidentifier()
+        or not isinstance(cases, tuple)
+        or not cases
+        or len(cases) >= 2**31
+        or any(not isinstance(case, str) or not case.isidentifier() for case in cases)
+        or len(set(cases)) != len(cases)
+    ):
+        raise ValueError("Tagged FFI reference requires an identifier and distinct, ordered case names")
+    return FFITaggedRefType(name, cases)
 
 
 @cache
-def ffi_side_from_voidptr(side_type: FFISideRefType):
-    @intrinsic
-    def wrap(typingctx, pointer, bid):
-        if pointer != types.voidptr or not isinstance(bid, types.Boolean):
+def ffi_tagged_from_voidptr(ref_type: FFITaggedRefType):
+    if not isinstance(ref_type, FFITaggedRefType):
+        raise TypeError("Expected a tagged FFI reference type")
+
+    @intrinsic(prefer_literal=True)
+    def wrap(typingctx, pointer, tag):
+        if pointer != types.voidptr or not isinstance(tag, types.Integer):
             return None
-        sig = side_type(pointer, bid)
+        if isinstance(tag, types.IntegerLiteral) and not 0 <= tag.literal_value < len(ref_type.cases):
+            raise ValueError(f"Invalid literal tag {tag.literal_value} for {ref_type}")
+        sig = ref_type(pointer, tag)
 
         def codegen(context, builder, signature, args):
-            result = context.make_helper(builder, side_type)
+            result = context.make_helper(builder, ref_type)
             result.pointer = args[0]
-            result.bid = args[1]
+            if len(ref_type.cases) < 1 << args[1].type.width:
+                invalid = builder.icmp_unsigned(">=", args[1], ir.Constant(args[1].type, len(ref_type.cases)))
+                with builder.if_then(invalid):
+                    trap = declare_symbol(builder, "llvm.trap", ir.FunctionType(ir.VoidType(), ()))
+                    builder.call(trap, ())
+                    builder.unreachable()
+            result.tag = context.cast(builder, args[1], tag, types.int32)
             return result._getvalue()
 
         return sig, codegen

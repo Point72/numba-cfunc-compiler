@@ -20,12 +20,17 @@ from numba_cfunc_compiler.extension.ffi import (
     register_ffi_dependency,
     register_ffi_iterator_method,
     register_ffi_method,
-    register_ffi_side_method,
+    register_ffi_tagged_method,
 )
 from numba_cfunc_compiler.extension.methods import method_registration_key
 from numba_cfunc_compiler.types.builtin.enum.host import register_enum_family
 from numba_cfunc_compiler.types.builtin.enum.native import enum_code
-from numba_cfunc_compiler.types.native.ffi import ffi_ref_from_voidptr, ffi_ref_type, ffi_side_from_voidptr, ffi_side_ref_type
+from numba_cfunc_compiler.types.native.ffi import (
+    ffi_ref_from_voidptr,
+    ffi_ref_type,
+    ffi_tagged_from_voidptr,
+    ffi_tagged_ref_type,
+)
 from numba_cfunc_compiler.types.native.input import bind_input
 from numba_cfunc_compiler.types.policy import ValueSemantics
 from tests.harness import ACTIVE_SOURCE
@@ -45,6 +50,19 @@ class SignedMode(Enum):
     DOWN = -1
     FLAT = 0
     UP = 1
+
+
+@pytest.fixture
+def bind_ffi_symbol():
+    callbacks = []
+
+    def bind(name, return_type, function, *argument_types):
+        callback = ctypes.CFUNCTYPE(return_type, ctypes.c_void_p, *argument_types)(function)
+        callbacks.append(callback)
+        llvm.add_symbol(name, ctypes.cast(callback, ctypes.c_void_p).value)
+        return callback
+
+    return bind
 
 
 def test_handlers():
@@ -210,12 +228,11 @@ def test_enum_sources_and_family_mismatch():
     assert signed_code() == -1
 
 
-def test_ffi_alias_methods():
+def test_ffi_alias_methods(bind_ffi_symbol):
     ref_type = ffi_ref_type("TestCString")
     symbol = "ncc_test_cstring_length"
     # The current process does not export strlen on every platform.
-    length_callback = ctypes.CFUNCTYPE(ctypes.c_size_t, ctypes.c_void_p)(lambda pointer: len(ctypes.string_at(pointer)))
-    llvm.add_symbol(symbol, ctypes.cast(length_callback, ctypes.c_void_p).value)
+    bind_ffi_symbol(symbol, ctypes.c_size_t, lambda pointer: len(ctypes.string_at(pointer)))
     register_ffi_method(ref_type, "length", symbol, types.uintp)
     wrap = ffi_ref_from_voidptr(ref_type)
 
@@ -232,42 +249,32 @@ def test_ffi_alias_methods():
 
     first_type = ffi_ref_type("ScoreFirst")
     second_type = ffi_ref_type("ScoreSecond")
-    side_type = ffi_side_ref_type("ScoreSide")
-    callbacks = []
-
-    def bind_symbol(name, function, *args):
-        callback = ctypes.CFUNCTYPE(ctypes.c_int64, ctypes.c_void_p, *args)(function)
-        callbacks.append(callback)
-        llvm.add_symbol(name, ctypes.cast(callback, ctypes.c_void_p).value)
-
-    bind_symbol("ncc_score_first", lambda _, value: value + 10, ctypes.c_int64)
-    bind_symbol("ncc_score_second", lambda _, left, right: left * 10 + right, ctypes.c_int64, ctypes.c_int64)
-    bind_symbol("ncc_score_bid", lambda _, value: value + 100, ctypes.c_int64)
-    bind_symbol("ncc_score_ask", lambda _, value: value - 100, ctypes.c_int64)
+    bind_ffi_symbol("ncc_score_first", ctypes.c_int64, lambda _, value: value + 10, ctypes.c_int64)
+    bind_ffi_symbol("ncc_score_second", ctypes.c_int64, lambda _, left, right: left * 10 + right, ctypes.c_int64, ctypes.c_int64)
     register_ffi_method(first_type, "score", "ncc_score_first", types.int64, (types.int64,))
     register_ffi_method(second_type, "score", "ncc_score_second", types.int64, (types.int64, types.int64))
-    register_ffi_side_method(side_type, "score", "ncc_score_bid", "ncc_score_ask", types.int64, (types.int64,))
+    register_ffi_method(first_type, "score", "ncc_score_first", types.int64, (types.int64,))
+    with pytest.raises(ValueError, match="Conflicting"):
+        register_ffi_method(first_type, "score", "ncc_score_second", types.int64, (types.int64,))
     first_source_type = ACTIVE_SOURCE.type_for(first_type, first_type, ValueSemantics.BORROWED_VIEW, ("score", "first"))
     number_source_type = ACTIVE_SOURCE.type_for(types.int64, types.int64, ValueSemantics.COPY, ("score", "number"))
     bind_first = bind_input(first_source_type)
     bind_number = bind_input(number_source_type)
     wrap_second = ffi_ref_from_voidptr(second_type)
     wrap_first = ffi_ref_from_voidptr(first_type)
-    make_side = ffi_side_from_voidptr(side_type)
 
     @cfunc(types.void(types.voidptr, types.voidptr, types.CPointer(types.int8), types.CPointer(types.int64)), _nrt=False)
     def callback(raw, number_slot, flags, output):
         first = bind_first(raw, (flags, flags, 0))
         number = bind_number(number_slot, (flags, flags, 0))
         second = wrap_second(raw)
-        side = make_side(raw, True)
-        output[0] = first.score(number) + second.score(3, 4) + side.score(number)
+        output[0] = first.score(number) + second.score(3, 4)
 
     number = ctypes.c_int64(5)
     flags = (ctypes.c_int8 * 1)(1)
     output = ctypes.c_int64()
     callback.ctypes(ctypes.c_void_p(1), ctypes.c_void_p(ctypes.addressof(number)), flags, ctypes.pointer(output))
-    assert output.value == 154
+    assert output.value == 49
 
     with pytest.raises(TypingError, match="requires"):
 
@@ -276,78 +283,161 @@ def test_ffi_alias_methods():
             return wrap_first(raw).score(1, 2)
 
 
-def test_ffi_iterators():
-    book_type = ffi_ref_type("TestBook")
-    side_type = ffi_side_ref_type("TestSide")
-    item_type = ffi_ref_type("TestItem")
-    callbacks = []
+def test_ffi_iterators(bind_ffi_symbol):
+    owner_type = ffi_ref_type("TestRangeOwner")
+    item_type = ffi_ref_type("TestRangeItem")
+    bind_ffi_symbol("ncc_direct_begin", ctypes.c_void_p, lambda _: 1)
+    bind_ffi_symbol("ncc_direct_end", ctypes.c_void_p, lambda _: None)
+    bind_ffi_symbol("ncc_direct_next", ctypes.c_void_p, lambda pointer: pointer + 1 if pointer < 2 else None)
+    bind_ffi_symbol("ncc_direct_value", ctypes.c_int64, lambda pointer: pointer)
 
-    def symbol(name, return_type, *argument_types):
-        def decorate(function):
-            callback = ctypes.CFUNCTYPE(return_type, *argument_types)(function)
-            callbacks.append(callback)
-            llvm.add_symbol(name, ctypes.cast(callback, ctypes.c_void_p).value)
-            return callback
-
-        return decorate
-
-    @symbol("ncc_test_bid_side", ctypes.c_void_p, ctypes.c_void_p)
-    def bid_side(_):
-        return 42
-
-    @symbol("ncc_test_ask_side", ctypes.c_void_p, ctypes.c_void_p)
-    def ask_side(_):
-        return 43
-
-    @symbol("ncc_test_bid_begin", ctypes.c_void_p, ctypes.c_void_p)
-    def bid_begin(_):
-        return 1
-
-    @symbol("ncc_test_ask_begin", ctypes.c_void_p, ctypes.c_void_p)
-    def ask_begin(_):
-        return 2
-
-    @symbol("ncc_test_end", ctypes.c_void_p, ctypes.c_void_p)
-    def end(_):
-        return None
-
-    @symbol("ncc_test_next", ctypes.c_void_p, ctypes.c_void_p)
-    def next_item(pointer):
-        return pointer + 1 if pointer < 2 else None
-
-    @symbol("ncc_test_item_value", ctypes.c_int64, ctypes.c_void_p)
-    def item_value(pointer):
-        return pointer
-
-    register_ffi_method(book_type, "bid_raw", "ncc_test_bid_side", types.voidptr)
-    register_ffi_method(book_type, "ask_raw", "ncc_test_ask_side", types.voidptr)
-    register_ffi_side_method(side_type, "begin_raw", "ncc_test_bid_begin", "ncc_test_ask_begin", item_type)
-    register_ffi_side_method(side_type, "end_raw", "ncc_test_end", "ncc_test_end", item_type)
-    register_ffi_method(item_type, "value", "ncc_test_item_value", types.int64)
-    register_ffi_iterator_method(side_type, "items", "begin_raw", "end_raw", item_type, "ncc_test_next")
-    register_ffi_dependency(book_type, side_type)
-    fingerprint = ffi_binding_fingerprint(book_type)
-    assert any(entry[:3] == (book_type.name, "dependency", side_type.name) for entry in fingerprint)
-    assert any(entry[:3] == (side_type.name, "iterator", "items") for entry in fingerprint)
+    register_ffi_method(owner_type, "begin_raw", "ncc_direct_begin", item_type)
+    register_ffi_method(owner_type, "end_raw", "ncc_direct_end", item_type)
+    register_ffi_method(item_type, "value", "ncc_direct_value", types.int64)
+    register_ffi_iterator_method(owner_type, "items", "begin_raw", "end_raw", item_type, "ncc_direct_next")
+    register_ffi_dependency(owner_type, item_type)
+    fingerprint = ffi_binding_fingerprint(owner_type)
+    assert any(entry[:3] == (owner_type.name, "iterator", "items") for entry in fingerprint)
     assert any(entry[:3] == (item_type.name, "method", "value") for entry in fingerprint)
-    wrap_book = ffi_ref_from_voidptr(book_type)
-    make_side = ffi_side_from_voidptr(side_type)
+    assert any(entry[1:4] == ("method", "value", (("ncc_direct_value",), types.int64.name, ())) for entry in fingerprint)
+    wrap_owner = ffi_ref_from_voidptr(owner_type)
 
     @cfunc(types.void(types.voidptr, types.CPointer(types.int64)), _nrt=False)
     def callback(raw, output):
-        book = wrap_book(raw)
-        bid = make_side(book.bid_raw(), True)
-        ask = make_side(book.ask_raw(), False)
         total = 0
-        for item in bid.items():
-            total += item.value()
-        for item in ask.items():
+        for item in wrap_owner(raw).items():
             total += item.value()
         output[0] = total
 
     output = ctypes.c_int64()
     callback.ctypes(None, ctypes.pointer(output))
-    assert output.value == 5
+    assert output.value == 3
+
+
+def test_tagged_ffi_methods_and_fingerprint(bind_ffi_symbol):
+    ref_type = ffi_tagged_ref_type("TaggedScore", ("low", "medium", "high"))
+    assert ref_type.tag("low") == 0
+    assert ref_type.tag("high") == 2
+    assert ref_type == ffi_tagged_ref_type("TaggedScore", ("low", "medium", "high"))
+    assert ref_type != ffi_tagged_ref_type("TaggedScore", ("high", "medium", "low"))
+    with pytest.raises(ValueError, match="Unknown case"):
+        ref_type.tag("missing")
+    with pytest.raises(ValueError, match="distinct"):
+        ffi_tagged_ref_type("DuplicateCases", ("low", "low"))
+
+    bind_ffi_symbol("ncc_tag_low", ctypes.c_int64, lambda _, value: value + 1, ctypes.c_int64)
+    bind_ffi_symbol("ncc_tag_medium", ctypes.c_int64, lambda _, value: value + 10, ctypes.c_int64)
+    bind_ffi_symbol("ncc_tag_high", ctypes.c_int64, lambda _, value: value + 100, ctypes.c_int64)
+    bind_ffi_symbol("ncc_tag_shared", ctypes.c_int64, lambda _, value: value * 2, ctypes.c_int64)
+
+    score = {"low": "ncc_tag_low", "medium": "ncc_tag_medium", "high": "ncc_tag_high"}
+    shared = dict.fromkeys(ref_type.cases, "ncc_tag_shared")
+    register_ffi_tagged_method(ref_type, "score", score, types.int64, (types.int64,))
+    register_ffi_tagged_method(ref_type, "shared", shared, types.int64, (types.int64,))
+    register_ffi_tagged_method(ref_type, "score", dict(reversed(list(score.items()))), types.int64, (types.int64,))
+    with pytest.raises(ValueError, match="Invalid tagged"):
+        register_ffi_tagged_method(ref_type, "missing", {"low": "ncc_tag_low"}, types.int64)
+    with pytest.raises(ValueError, match="Conflicting"):
+        register_ffi_tagged_method(ref_type, "score", shared, types.int64, (types.int64,))
+
+    wrap = ffi_tagged_from_voidptr(ref_type)
+
+    @cfunc(types.int64(types.voidptr, types.int32, types.int64), _nrt=False)
+    def callback(raw, tag, value):
+        reference = wrap(raw, tag)
+        return reference.score(value) + reference.shared(value)
+
+    assert [callback.ctypes(None, tag, 5) for tag in range(3)] == [16, 25, 115]
+    assert "llvm.trap" in callback.inspect_llvm()
+
+    low_tag = ref_type.tag("low")
+    high_tag = ref_type.tag("high")
+
+    @cfunc(types.int64(types.voidptr, types.boolean), _nrt=False)
+    def select_case(raw, low):
+        if low:
+            reference = wrap(raw, low_tag)
+        else:
+            reference = wrap(raw, high_tag)
+        return reference.score(5)
+
+    assert select_case.ctypes(None, True) == 6
+    assert select_case.ctypes(None, False) == 105
+
+    @njit
+    def bad_literal(raw):
+        return wrap(raw, 3)
+
+    with pytest.raises((TypingError, ValueError), match="Invalid literal tag"):
+        bad_literal.compile((types.voidptr,))
+
+    @njit
+    def bad_argument(raw):
+        return wrap(raw, 0).score(1.5)
+
+    with pytest.raises(TypingError, match="requires"):
+        bad_argument.compile((types.voidptr,))
+
+    fingerprint = ffi_binding_fingerprint(ref_type)
+    root_type = ffi_ref_type("TaggedScoreRoot")
+    register_ffi_dependency(root_type, ref_type)
+    assert any(entry[1:3] == ("cases", ref_type.cases) for entry in ffi_binding_fingerprint(root_type))
+    reordered = ffi_tagged_ref_type("TaggedScore", ("high", "medium", "low"))
+    register_ffi_tagged_method(reordered, "score", score, types.int64, (types.int64,))
+    wrap_reordered = ffi_tagged_from_voidptr(reordered)
+
+    @cfunc(types.int64(types.voidptr), _nrt=False)
+    def reordered_score(raw):
+        return wrap_reordered(raw, 0).score(5)
+
+    assert reordered_score.ctypes(None) == 105
+    changed = ffi_tagged_ref_type("TaggedScoreChanged", ref_type.cases)
+    register_ffi_tagged_method(changed, "score", {**score, "high": "ncc_tag_low"}, types.int64, (types.int64,))
+
+    def entry(fingerprint, kind, name):
+        return next(item for item in fingerprint if item[1:3] == (kind, name))
+
+    assert entry(fingerprint, "method", "score")[3][0] == ("ncc_tag_low", "ncc_tag_medium", "ncc_tag_high")
+    assert entry(fingerprint, "cases", ref_type.cases)[2] != entry(ffi_binding_fingerprint(reordered), "cases", reordered.cases)[2]
+    assert entry(fingerprint, "method", "score")[3][0] != entry(ffi_binding_fingerprint(changed), "method", "score")[3][0]
+
+
+def test_tagged_ffi_iterator_and_void_method(bind_ffi_symbol):
+    ref_type = ffi_tagged_ref_type("TaggedItems", ("one", "two", "three"))
+    item_type = ffi_ref_type("TaggedItem")
+    for tag in range(3):
+        bind_ffi_symbol(f"ncc_tag_begin_{tag}", ctypes.c_void_p, lambda _, tag=tag: tag + 1)
+    bind_ffi_symbol("ncc_tag_end", ctypes.c_void_p, lambda _: None)
+    bind_ffi_symbol("ncc_tag_next", ctypes.c_void_p, lambda _: None)
+    bind_ffi_symbol("ncc_tag_item_value", ctypes.c_int64, lambda pointer: pointer)
+    bind_ffi_symbol(
+        "ncc_tag_store", None, lambda pointer, value: ctypes.cast(pointer, ctypes.POINTER(ctypes.c_int64)).__setitem__(0, value), ctypes.c_int64
+    )
+
+    begin = {case: f"ncc_tag_begin_{tag}" for tag, case in enumerate(ref_type.cases)}
+    end = dict.fromkeys(ref_type.cases, "ncc_tag_end")
+    register_ffi_tagged_method(ref_type, "begin", begin, item_type)
+    register_ffi_tagged_method(ref_type, "end", end, item_type)
+    register_ffi_tagged_method(ref_type, "store", dict.fromkeys(ref_type.cases, "ncc_tag_store"), types.void, (types.int64,))
+    register_ffi_method(item_type, "value", "ncc_tag_item_value", types.int64)
+    register_ffi_iterator_method(ref_type, "items", "begin", "end", item_type, "ncc_tag_next")
+    register_ffi_dependency(ref_type, item_type)
+    assert any(entry[1:3] == ("iterator", "items") for entry in ffi_binding_fingerprint(ref_type))
+    wrap = ffi_tagged_from_voidptr(ref_type)
+
+    @cfunc(types.int64(types.voidptr, types.int32), _nrt=False)
+    def callback(raw, tag):
+        reference = wrap(raw, tag)
+        reference.store(42)
+        total = 0
+        for item in reference.items():
+            total += item.value()
+        return total
+
+    value = ctypes.c_int64(0)
+    pointer = ctypes.cast(ctypes.pointer(value), ctypes.c_void_p)
+    assert [callback.ctypes(pointer, tag) for tag in range(3)] == [1, 2, 3]
+    assert value.value == 42
 
 
 def test_value_methods():
