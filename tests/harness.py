@@ -312,6 +312,12 @@ class CompiledNode:
 
         self._in_store, self._inputs = _slot_arrays(self._n_inputs)
         self._out_store, self._outputs = _slot_arrays(self._n_outputs)
+        self._struct_outputs = {}
+        for idx, output_type in enumerate(self._output_types):
+            if isinstance(output_type, type) and issubclass(output_type, ctypes.Structure):
+                value = output_type()
+                self._struct_outputs[idx] = value
+                self._outputs[idx] = ctypes.addressof(value)
         # State cells start zeroed (NULL); container state is allocated on START.
         self._state_store, self._state = _slot_arrays(self._n_state)
         self._raw_state_buffers = []
@@ -332,8 +338,11 @@ class CompiledNode:
         else:  # int / bool live in the low bytes of the int64 cell
             store[idx] = int(value)
 
-    @staticmethod
-    def _read(store, idx, py_type):
+    def _read(self, store, idx, py_type):
+        if idx in self._struct_outputs:
+            value = py_type()
+            ctypes.memmove(ctypes.addressof(value), ctypes.addressof(self._struct_outputs[idx]), ctypes.sizeof(py_type))
+            return value
         if py_type is float:
             return ctypes.c_double.from_buffer(store, idx * ctypes.sizeof(ctypes.c_int64)).value
         if py_type is bool:
