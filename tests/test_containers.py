@@ -142,19 +142,15 @@ def two_constant_containers(x: Signal[int], items: NumbaList[int], mapping: Numb
 
 
 def test_container_operations():
-    seen = CompiledNode(compile_function(dict_contains), [int]).start()
-    assert [seen.execute([value])[0] for value in (1, 2, 1, 3, 2)] == [0, 0, 1, 0, 1]
-    dict_aliases = CompiledNode(compile_function(dict_alias_iteration), [int]).start()
-    assert [dict_aliases.execute([value])[0] for value in (2, 3)] == [26, 65]
-    dict_mutation_node = CompiledNode(compile_function(dict_mutations), [int]).start()
-    assert [dict_mutation_node.execute([value])[0] for value in (2, 2, 3)] == [20, 42, 29]
-
-    lengths = CompiledNode(compile_function(list_append_len), [int]).start()
-    assert [lengths.execute([value])[0] for value in (10, 20, 30)] == [1, 2, 3]
-    list_mutation_node = CompiledNode(compile_function(list_mutations), [int]).start()
-    assert [list_mutation_node.execute([value])[0] for value in (2, 3, 4, 1)] == [5, 10, 15, 3]
-
-    for node in (seen, dict_aliases, dict_mutation_node, lengths, list_mutation_node):
+    for func, inputs, expected in (
+        (dict_contains, (1, 2, 1, 3, 2), [0, 0, 1, 0, 1]),
+        (dict_alias_iteration, (2, 3), [26, 65]),
+        (dict_mutations, (2, 2, 3), [20, 42, 29]),
+        (list_append_len, (10, 20, 30), [1, 2, 3]),
+        (list_mutations, (2, 3, 4, 1), [5, 10, 15, 3]),
+    ):
+        node = CompiledNode(compile_function(func), [int]).start()
+        assert [node.execute([value])[0] for value in inputs] == expected
         node.stop()
         assert node._state[0] is None
 
@@ -192,29 +188,21 @@ def test_container_constructors_are_rejected_in_lifecycle_bodies(body_name, cons
 
 
 def test_constant_container_inputs():
-    for values, expected in (([2, 3], (10, True)), ((2, 3), (10, True)), ([], (3, True))):
-        result = compile_function(list_constant_total, values=values)
+    for func, values, first, second in (
+        (list_constant_total, [2, 3], 10, 11),
+        (list_constant_total, (2, 3), 10, 11),
+        (list_constant_total, [], 3, 4),
+        (dict_constant_lookup, {3: 30, 5: 50}, 32, 1),
+        (dict_constant_lookup, {}, -1, -1),
+    ):
+        result = compile_function(func, values=values)
         assert result.state_values == (0,)
         assert result.constant_container_indices == (0,)
         node = CompiledNode(result, [int]).start()
         pointer = node._state[0]
         assert pointer
-        assert node.execute([3]) == expected
-        assert node.execute([4])[1]
-        assert node._state[0] == pointer
-        node.stop()
-        assert node._state[0] is None
-
-    for values, expected in (({3: 30, 5: 50}, (32, True)), ({}, (-1, True))):
-        result = compile_function(dict_constant_lookup, values=values)
-        assert result.state_values == (0,)
-        assert result.constant_container_indices == (0,)
-        node = CompiledNode(result, [int]).start()
-        pointer = node._state[0]
-        assert pointer
-        assert node.execute([3]) == expected
-        if values:
-            assert node.execute([4]) == (1, True)
+        assert node.execute([3]) == (first, True)
+        assert node.execute([4]) == (second, True)
         assert node._state[0] == pointer
         node.stop()
         assert node._state[0] is None
