@@ -68,6 +68,28 @@ Enum and enumset ABI layouts come from the registered enum family and host type 
 
 `NumbaList` and `NumbaDict` constant parameters are read-only in compiled callbacks. Mutating methods and item assignment fail during compilation, including through aliases and helper calls. The compiler allocates each constant container once per node instance during START, reuses it during EXECUTE, and frees it during STOP. Hosts must allocate the full `state_values` array, including the hidden slots in `constant_container_indices`, and call START once before EXECUTE and STOP once when the instance ends. `State[NumbaList]` and `State[NumbaDict]` remain mutable.
 
+## Numba Methods
+
+Use `@numba_method` for reusable logic called by a compiled node:
+
+```python
+from numba_cfunc_compiler.api import State, numba_method
+
+@numba_method
+def ema_step(previous, value, alpha):
+    return alpha * value + (1.0 - alpha) * previous
+
+@numba_node
+def ema(value: Signal[float], alpha: float) -> Signal[float]:
+    previous: State[float] = 0.0
+    previous = ema_step(previous, value, alpha)
+    return previous
+```
+
+Methods remain ordinary Python functions outside compiled nodes. Pass node values and state explicitly; return scalar state updates and assign them in the node. Mutable list and dict state can be changed through arguments. Helper calls accept named variables, including node locals, and can call other `@numba_method` helpers or module-qualified helpers. Their bodies use the active compilation context's AST handlers and native types.
+
+Inlining is requested by default. Use `@numba_method(force_inline=False)` to disable that request. Helpers cannot declare `State`, emit node outputs, use default arguments or nested scopes, or capture runtime globals and closure data. Supply those values as arguments. Each helper body and inline setting contributes to the compiled semantic key.
+
 ______________________________________________________________________
 
 ## Extension API
