@@ -6,6 +6,7 @@ import types
 
 import pytest
 
+from numba_cfunc_compiler import numba_methods
 from numba_cfunc_compiler.api import NumbaList, State, create_new_list, numba_method
 from numba_cfunc_compiler.types.builtin.enum.host import register_enum_family
 from tests.harness import CompiledNode, Signal, compile_function, numba_node
@@ -71,6 +72,17 @@ INJECTED_METHOD = None
 def nested_method(x: Signal[int]) -> Signal[int]:
     local = x
     return call_plus_two(local)
+
+
+@numba_node
+def repeated_method(x: Signal[int], y: Signal[float]) -> Signal[float]:
+    return plus_two(x) + plus_two(y)
+
+
+@numba_node
+def invalid_second_method_call(x: Signal[int]) -> Signal[int]:
+    first = plus_two(x)
+    return first + plus_two(x + 1)
 
 
 @numba_node
@@ -210,6 +222,24 @@ def test_nested_and_module_calls_change_semantic_key():
         METHOD_MODULE.apply = plus_two
     assert no_inline.semantic_key != original.semantic_key
     assert CompiledNode(no_inline, input_types=[int]).start().execute([5])[0] == 7
+
+
+def test_repeated_helper_is_lowered_once_but_each_call_is_validated(monkeypatch):
+    original = numba_methods._function_ast
+    lowered = []
+
+    def record_lowering(helper):
+        lowered.append(helper)
+        return original(helper)
+
+    monkeypatch.setattr(numba_methods, "_function_ast", record_lowering)
+    result = compile_function(repeated_method)
+    assert lowered == [plus_two]
+    node = CompiledNode(result, input_types=[int, float]).start()
+    assert node.execute([3, 1.5])[0] == 8.5
+
+    with pytest.raises(TypeError, match="must be a named variable"):
+        compile_function(invalid_second_method_call)
 
 
 def test_call_globals_and_closure_helpers_change_semantic_key():

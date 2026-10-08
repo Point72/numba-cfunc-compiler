@@ -46,11 +46,8 @@ def numba_method(func: _F | None = None, *, force_inline: bool = True) -> _F | C
             if existing.force_inline != force_inline:
                 raise TypeError("@numba_method cannot change force_inline on an already decorated function")
             return method
-        options = _MethodOptions(force_inline)
-        setattr(method, _OPTIONS, options)
-        registered = register_jitable(inline="always" if force_inline else "never")(method)
-        setattr(registered, _OPTIONS, options)
-        return registered
+        setattr(method, _OPTIONS, _MethodOptions(force_inline))
+        return method
 
     return decorate if func is None else decorate(func)
 
@@ -118,6 +115,7 @@ class NumbaMethodManager:
         self.variable_factory = variable_factory
         self.definitions: list[_Definition] = []
         self.hashes: dict[str, str] = {}
+        self.lowered_names: dict[Callable, str] = {}
         self.active: set[Callable] = set()
         self.next_id = 0
 
@@ -146,13 +144,20 @@ class NumbaMethodManager:
             return None
         if helper in self.active:
             raise TypeError(f"Recursive @numba_method helper call involving '{helper.__qualname__}' is not supported")
-        self.active.add(helper)
-        try:
-            return self._lower(call, helper)
-        finally:
-            self.active.remove(helper)
+        self._validate_call(call, helper)
+        name = self.lowered_names.get(helper)
+        if name is None:
+            self.active.add(helper)
+            try:
+                name = self._lower(helper)
+            finally:
+                self.active.remove(helper)
+            self.lowered_names[helper] = name
+        call.func = ast.Name(id=name, ctx=ast.Load())
+        return call
 
-    def _lower(self, call: ast.Call, helper: Callable) -> ast.Call:
+    @staticmethod
+    def _validate_call(call: ast.Call, helper: Callable) -> None:
         signature = inspect.signature(helper)
         keyword_only = [param.name for param in signature.parameters.values() if param.kind is inspect.Parameter.KEYWORD_ONLY]
         if keyword_only:
@@ -173,6 +178,7 @@ class NumbaMethodManager:
             if not isinstance(argument, ast.Name):
                 raise TypeError(f"@numba_method helper '{helper.__qualname__}' argument '{name}' must be a named variable")
 
+    def _lower(self, helper: Callable) -> str:
         node = _function_ast(helper)
         symbols = _validate_helper(helper, node)
         name = f"__ncc_method_{self.next_id}"
@@ -200,8 +206,7 @@ class NumbaMethodManager:
         self.definitions.append(_Definition(helper, lowered, converter.call_globals, options))
         payload = {"lowered": ast.dump(lowered, include_attributes=False), "force_inline": options.force_inline}
         self.hashes[name] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-        call.func = ast.Name(id=name, ctx=ast.Load())
-        return call
+        return name
 
     def build_bindings(self, compiler_globals: dict[str, Any]) -> dict[str, Callable]:
         bindings = {}
