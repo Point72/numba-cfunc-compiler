@@ -24,11 +24,11 @@ install:  ## install python library
 .PHONY: lint-py lint-cpp lint-docs lint lints
 lint-py:  ## run python linter with ruff
 	python -m ruff --version
-	python -m ruff check numba_cfunc_compiler
-	python -m ruff format --check numba_cfunc_compiler
+	python -m ruff check numba_cfunc_compiler tests
+	python -m ruff format --check numba_cfunc_compiler tests
 
 lint-cpp:  ## run cpp linter
-	clang-format --dry-run -Werror -i -style=file ./numba_cfunc_compiler/numba_rt/cext/* ./numba_cfunc_compiler/tests/cfunc_caller.c
+	clang-format --dry-run -Werror -i -style=file ./numba_cfunc_compiler/runtime/cext/* ./numba_cfunc_compiler/runtime/nrt_init_py.c ./tests/cfunc_caller.c
 
 lint-docs:  ## lint docs with mdformat and codespell
 	python -m mdformat --check README.md docs/wiki/
@@ -41,11 +41,11 @@ lints: lint
 
 .PHONY: fix-py fix-cpp fix format
 fix-py:  ## fix python formatting with ruff
-	python -m ruff check --fix numba_cfunc_compiler
-	python -m ruff format numba_cfunc_compiler
+	python -m ruff check --fix numba_cfunc_compiler tests
+	python -m ruff format numba_cfunc_compiler tests
 
 fix-cpp:  ## fix cpp formatting
-	clang-format -i -style=file ./numba_cfunc_compiler/numba_rt/cext/* ./numba_cfunc_compiler/tests/cfunc_caller.c
+	clang-format -i -style=file ./numba_cfunc_compiler/runtime/cext/* ./numba_cfunc_compiler/runtime/nrt_init_py.c ./tests/cfunc_caller.c
 
 fix-docs:  ## autoformat docs with mdformat and codespell
 	python -m mdformat README.md docs/wiki/
@@ -77,13 +77,13 @@ check: checks
 #########
 .PHONY: test-py tests-py coverage-py
 test-py:  ## run python tests
-	python -m pytest -v numba_cfunc_compiler/tests
+	python -m pytest -v tests
 
 # alias
 tests-py: test-py
 
 coverage-py:  ## run python tests and collect test coverage
-	python -m pytest -v numba_cfunc_compiler/tests --cov=numba_cfunc_compiler --cov-report term-missing --cov-report xml
+	python -m pytest -v tests --cov=numba_cfunc_compiler --cov-report term-missing --cov-report xml
 
 .PHONY: test coverage tests
 test: test-py  ## run all tests
