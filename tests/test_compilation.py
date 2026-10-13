@@ -20,7 +20,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from numba_cfunc_compiler.api import NumbaList, State, create_new_list, set_output
-from numba_cfunc_compiler.core import compile as compiler_module
 from numba_cfunc_compiler.core.analysis import FunctionAnalyzer, OutputAnalysis, OutputTypeHandler
 from numba_cfunc_compiler.core.compile import create_compiled_func
 from numba_cfunc_compiler.core.context import CompilationContext
@@ -249,16 +248,9 @@ def test_validation():
         OutputAnalysis(outputs={1: int})
 
 
-def test_semantic_key(monkeypatch):
+def test_semantic_key():
     first = compile_function(multiply, factor=3)
     same = compile_function(multiply, factor=3)
     changed = compile_function(multiply, factor=4)
     assert first.semantic_key == same.semantic_key
     assert first.semantic_key != changed.semantic_key
-    original = compiler_module.build_semantic_key("source", "signature", "options")
-    monkeypatch.setattr(
-        compiler_module,
-        "COMPILER_IMPLEMENTATION_VERSION",
-        compiler_module.COMPILER_IMPLEMENTATION_VERSION + 1,
-    )
-    assert compiler_module.build_semantic_key("source", "signature", "options") != original

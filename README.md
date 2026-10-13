@@ -437,7 +437,7 @@ Python Function
 
 ### CompilationContext
 
-Host type, callback component, AST syntax adapter, and function analysis registrations live on a `CompilationContext` instance (backed by `contextvars.ContextVar`). Numba extension registrations are process-wide. Re-registering the same method object is idempotent; replacing a method within the process is rejected. The compiled semantic key includes native layouts, input semantics, method names and signatures, and FFI symbol signatures. It does not hash method bodies, so artifacts must be invalidated if those bodies change across processes.
+Host type, callback component, AST syntax adapter, and function analysis registrations live on a `CompilationContext` instance (backed by `contextvars.ContextVar`). Numba extension registrations are process-wide. Re-registering the same method object is idempotent; replacing a method within the process is rejected. The compiled semantic key includes native layouts, input semantics, method names and signatures, and FFI symbol signatures. It does not include the compiler package version or hash method bodies. Hosts using persistent compiled-library caches must invalidate them after compiler upgrades or when method implementations change across processes.
 
 ### Variable Access
 
