@@ -41,10 +41,6 @@ from numba_cfunc_compiler.types.builtin.list.native import (
 )
 from numba_cfunc_compiler.types.native.pointers import cast_voidptr_to_int, cast_voidptr_to_ptr, voidptr_null
 
-# Bump when a compiler implementation change can alter generated native code
-# without changing the generated source or the binding/layout fingerprints.
-COMPILER_IMPLEMENTATION_VERSION = 2
-
 __all__ = [
     "CompilationResult",
     "create_compiled_func",
@@ -89,7 +85,6 @@ def build_semantic_key(
     method_bindings_key: tuple = (),
 ) -> str:
     payload = {
-        "compiler_implementation_version": COMPILER_IMPLEMENTATION_VERSION,
         "new_func_code": new_func_code,
         "cfunc_sig": cfunc_sig,
         "cfunc_kwargs": cfunc_kwargs,
