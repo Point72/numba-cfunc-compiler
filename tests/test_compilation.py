@@ -139,7 +139,7 @@ def time_literals(span: Signal[timedelta]) -> Signal[datetime]:
 
 @numba_node
 def naive_time(span: Signal[timedelta]) -> Signal[datetime]:
-    start: State[datetime] = datetime(2020, 1, 1)  # noqa: DTZ001 - verify naive datetime rejection
+    start: State[datetime] = datetime(2020, 1, 1)
     return start + span
 
 
