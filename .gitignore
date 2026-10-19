@@ -136,7 +136,6 @@ js/*.tgz
 .ipynb_checkpoints
 .autoversion
 Untitled*.ipynb
-numba_cfunc_compiler/extension
 numba_cfunc_compiler/nbextension
 numba_cfunc_compiler/labextension
 
