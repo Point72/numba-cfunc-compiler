@@ -192,6 +192,25 @@ def test_ffi_linkage(internalize):
     linked.verify()
 
 
+def test_ffi_linkage_with_enum_function_attributes(caplog):
+    # Clang -O2 output carries enum attributes, which LLVM prints as a
+    # "; Function Attrs:" comment line above the define.
+    module = llvm.parse_assembly("declare i64 @ffi()\ndefine i64 @entry() { %result = call i64 @ffi()\n ret i64 %result }\n")
+    ffi_module = llvm.parse_assembly(
+        'define i64 @ffi() #0 { ret i64 7 }\nattributes #0 = { mustprogress nounwind willreturn "target-cpu"="x86-64" }\n'
+    )
+    assert str(ffi_module.get_function("ffi")).lstrip().startswith("; Function Attrs:")
+
+    linked = link_ffi_bitcode(module, ffi_module.as_bitcode())
+
+    assert "Failed to link FFI bitcode" not in caplog.text
+    attributes = b" ".join(linked.get_function("ffi").attributes)
+    assert b"alwaysinline" in attributes
+    assert b"nounwind" in attributes
+    assert '"target-cpu"' not in str(linked)
+    linked.verify()
+
+
 def test_standalone_types():
     with CompilationContext():
         register_all()

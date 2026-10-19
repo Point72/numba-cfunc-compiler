@@ -80,7 +80,9 @@ class LLVMIRHelper:
         ir_text = str(module)
         for function in module.functions:
             if function.name in names and not function.is_declaration:
-                header = str(function).split("\n", 1)[0]
+                # Enum function attributes are printed as a "; Function Attrs:"
+                # comment line ahead of the definition, so skip to the define.
+                header = next((line for line in str(function).splitlines() if line.startswith("define")), "")
                 group = re.search(rf" #\d+\b{LLVMIRHelper._ATTRIBUTE_REF_FOLLOW}", header)
                 insertion_point = group.start() if group else header.rfind(" {")
                 if insertion_point < 0 or header not in ir_text:
