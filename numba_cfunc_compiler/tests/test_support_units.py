@@ -92,7 +92,7 @@ def test_datetime_timedelta():
 
     assert DateTimeType.to_nanos(aware) == int(aware.timestamp() * 1e9)
     with pytest.raises(TypeError, match="timezone-aware"):
-        DateTimeType.to_nanos(datetime(2020, 1, 1))  # noqa: DTZ001 - verifies naive datetime rejection
+        DateTimeType.to_nanos(datetime(2020, 1, 1))
     assert TimeDeltaType.to_nanos(delta) == int(delta.total_seconds() * 1e9)
 
     assert DateTimeType.from_type(datetime, UnknownNumbaValue()).value is datetime
