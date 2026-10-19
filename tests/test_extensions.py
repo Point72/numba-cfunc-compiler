@@ -12,6 +12,7 @@ from numba.core.errors import TypingError
 from numba_cfunc_compiler.core.context import CompilationContext
 from numba_cfunc_compiler.core.converter import NumbaASTConverter
 from numba_cfunc_compiler.core.defaults import register_all
+from numba_cfunc_compiler.core.postprocess import link_ffi_bitcode
 from numba_cfunc_compiler.core.variable_factory import VariableFactory
 from numba_cfunc_compiler.extension.ast import ASTHandlerRegistry, HandlerPhase, HandlerResult, LifecycleBody, ast_handler, with_handlers
 from numba_cfunc_compiler.extension.bindings import register_value_type, value_binding
@@ -438,6 +439,25 @@ def test_tagged_ffi_iterator_and_void_method(bind_ffi_symbol):
     pointer = ctypes.cast(ctypes.pointer(value), ctypes.c_void_p)
     assert [callback.ctypes(pointer, tag) for tag in range(3)] == [1, 2, 3]
     assert value.value == 42
+
+
+def test_ffi_linkage_with_enum_function_attributes(caplog):
+    # Clang -O2 output carries enum attributes, which LLVM prints as a
+    # "; Function Attrs:" comment line above the define.
+    module = llvm.parse_assembly("declare i64 @ffi()\ndefine i64 @entry() { %result = call i64 @ffi()\n ret i64 %result }\n")
+    ffi_module = llvm.parse_assembly(
+        'define i64 @ffi() #0 { ret i64 7 }\nattributes #0 = { mustprogress nounwind willreturn "target-cpu"="x86-64" }\n'
+    )
+    assert str(ffi_module.get_function("ffi")).lstrip().startswith("; Function Attrs:")
+
+    linked = link_ffi_bitcode(module, ffi_module.as_bitcode())
+
+    assert "Failed to link FFI bitcode" not in caplog.text
+    attributes = b" ".join(linked.get_function("ffi").attributes)
+    assert b"alwaysinline" in attributes
+    assert b"nounwind" in attributes
+    assert '"target-cpu"' not in str(linked)
+    linked.verify()
 
 
 def test_value_methods():
