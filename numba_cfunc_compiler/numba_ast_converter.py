@@ -58,6 +58,13 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.numba_type_inference = NumbaTypeInference(variable_factory, self.call_globals)
         self.start_body = start_body or []
         self.stop_body = stop_body or []
+        self._next_unique_id = 0
+
+    def unique_id(self) -> int:
+        """Return a per-function id for naming generated variables, keeping the semantic key stable."""
+        uid = self._next_unique_id
+        self._next_unique_id += 1
+        return uid
 
     def visit_FunctionDef(self, node):
         from numba_cfunc_compiler.compiler_constants import (
