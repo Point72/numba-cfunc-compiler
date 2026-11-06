@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -25,15 +25,27 @@ permissions:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    name: build (${{ matrix.platform.name }}-${{ matrix.python.version }})
+    runs-on: ${{ matrix.platform.os }}
 
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        platform:
+          - name: ubuntu-24.04
+            os: ubuntu-24.04
+          - name: ubuntu-24.04-arm
+            os: ubuntu-24.04-arm
+          - name: macos-26
+            os: macos-26
+          - name: windows-2025
+            os: windows-2025
         python:
           - version: "3.10"
             cibuildwheel: "cp310"
             primary: true
+        include:
+          - target: native
+            dist_path: dist
 
     steps:
       - name: Checkout
@@ -42,7 +54,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
+        uses: actions-ext/python/setup@c7ef9cbf13bc854a8d1422e9f8c6ee7a7ce1b911
         with:
           version: ${{ matrix.python.version }}
 
@@ -51,40 +63,48 @@ jobs:
 
       - name: Install dependencies
         run: make develop
+        if: matrix.target == 'native'
 
       - name: Lint
         run: make lint
-        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
+        if: matrix.platform.name == 'ubuntu-24.04' && matrix.python.primary
 
       - name: Checks
         run: make checks
-        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
+        if: matrix.platform.name == 'ubuntu-24.04' && matrix.python.primary
 
       - name: Test
         run: make coverage
+        if: matrix.target == 'native'
+
+      - name: Build and test Pyodide wheel
+        run: make test-pyodide
+        if: matrix.target == 'pyodide'
 
       - name: Upload test results (Python)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: test-results-${{ matrix.os }}-${{ matrix.python.version }}
+          name: test-results-${{ matrix.platform.name }}-${{ matrix.python.version }}
           path: junit.xml
-        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
+        if: matrix.platform.name == 'ubuntu-24.04' && matrix.python.primary
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@7622c5bf3d112a72ab4fa3951c2aa5723d8ab92d  # v2.25.0
         with:
           files: '**/junit.xml'
-        if: matrix.os == 'ubuntu-latest' && matrix.python.primary
+        if: matrix.platform.name == 'ubuntu-24.04' && matrix.python.primary
 
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+        if: matrix.target == 'native'
 
       - name: Install build dependencies
         run: pip install cibuildwheel
+        if: matrix.target == 'native'
 
-      - name: Build distributions (Linux)
+      - name: Build distributions (Linux x86_64)
         run: |
           rm -rf dist
           make dist-py-sdist
@@ -92,8 +112,20 @@ jobs:
           make dist-check
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-manylinux*"
+          CIBW_ARCHS_LINUX: native
           CIBW_BUILD_VERBOSITY: 3
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform.name == 'ubuntu-24.04'
+
+      - name: Build distributions (Linux ARM64)
+        run: |
+          rm -rf dist
+          make dist-py-wheel
+          make dist-check
+        env:
+          CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-manylinux*"
+          CIBW_ARCHS_LINUX: native
+          CIBW_BUILD_VERBOSITY: 3
+        if: matrix.platform.name == 'ubuntu-24.04-arm'
 
       - name: Build distributions (macOS)
         run: |
@@ -102,7 +134,7 @@ jobs:
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-macos*"
           CIBW_BUILD_VERBOSITY: 3
-        if: matrix.os == 'macos-latest'
+        if: matrix.platform.name == 'macos-26'
 
       - name: Build distributions (Windows)
         run: |
@@ -110,22 +142,22 @@ jobs:
           make dist-py-wheel
         env:
           CIBW_BUILD: "${{ matrix.python.cibuildwheel }}-win_amd64"
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform.name == 'windows-2025'
 
       - name: Test wheel
-        uses: actions-ext/python/test-wheel@ec67f82b3bd863948308a41ecb9e70547cbb19c7
+        uses: actions-ext/python/test-wheel@c7ef9cbf13bc854a8d1422e9f8c6ee7a7ce1b911
         with:
           module: numba_cfunc_compiler
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.target == 'native' && runner.os == 'Linux'
 
       - name: Test source distribution
-        uses: actions-ext/python/test-sdist@c8228d827a81b9f8c808825328af361c45461ba3
+        uses: actions-ext/python/test-sdist@c7ef9cbf13bc854a8d1422e9f8c6ee7a7ce1b911
         with:
           module: numba_cfunc_compiler
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform.name == 'ubuntu-24.04'
 
       - name: Upload distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.python.version }}
-          path: dist
+          name: dist-${{ matrix.platform.name }}-${{ matrix.python.version }}
+          path: ${{ matrix.dist_path }}

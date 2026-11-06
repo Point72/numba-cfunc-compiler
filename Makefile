@@ -31,8 +31,8 @@ lint-cpp:  ## run cpp linter
 	clang-format --dry-run -Werror -i -style=file ./numba_cfunc_compiler/numba_rt/cext/* ./numba_cfunc_compiler/tests/cfunc_caller.c
 
 lint-docs:  ## lint docs with mdformat and codespell
-	python -m mdformat --check README.md docs/wiki/
-	python -m codespell_lib README.md docs/wiki/
+	python -m mdformat --check README.md $(wildcard docs/wiki)
+	python -m codespell_lib README.md $(wildcard docs/wiki)
 
 lint: lint-cpp lint-py  ## run project linters
 
@@ -48,8 +48,8 @@ fix-cpp:  ## fix cpp formatting
 	clang-format -i -style=file ./numba_cfunc_compiler/numba_rt/cext/* ./numba_cfunc_compiler/tests/cfunc_caller.c
 
 fix-docs:  ## autoformat docs with mdformat and codespell
-	python -m mdformat README.md docs/wiki/
-	python -m codespell_lib --write README.md docs/wiki/
+	python -m mdformat README.md $(wildcard docs/wiki)
+	python -m codespell_lib --write README.md $(wildcard docs/wiki)
 
 fix: fix-cpp fix-py fix-docs  ## run project autoformatters
 
@@ -65,7 +65,7 @@ check-dist:  ## check python sdist and wheel with check-dist
 	check-dist -v
 
 check-types:  ## check python types with ty
-	ty check --python $$(which python)
+	python -m ty check
 
 checks: check-dist
 
@@ -87,6 +87,7 @@ coverage-py:  ## run python tests and collect test coverage
 
 .PHONY: test coverage tests
 test: test-py  ## run all tests
+
 coverage: coverage-py  ## run all tests and collect test coverage
 
 # alias

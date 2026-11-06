@@ -44,6 +44,7 @@ develop = [
     "hatch-cpp",
     "hatchling",
     "mdformat",
+    "mdformat-myst",
     "mdformat-tables>=1",
     "pytest",
     "pytest-cov",
@@ -82,8 +83,9 @@ test-command = "echo 'TODO'"
 test-extras = "develop"
 
 [tool.cibuildwheel.linux]
+manylinux-aarch64-image = "manylinux_2_28"
 manylinux-x86_64-image = "manylinux_2_28"
-skip = "*i686 musllinux*"
+skip = "*i686* *musllinux*"
 
 [tool.cibuildwheel.macos]
 environment = {MACOSX_DEPLOYMENT_TARGET="11.0"}
@@ -91,7 +93,8 @@ archs = "arm64"
 
 [tool.cibuildwheel.windows]
 archs = "AMD64"
-skip = "*win32 *arm_64"
+skip = "*win32 *arm64"
+
 
 [tool.coverage.run]
 branch = true
