@@ -1,5 +1,6 @@
 import ast
 import inspect
+import itertools
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -309,6 +310,7 @@ def test_container_loops():
 
         class Converter:
             variable_factory = factory
+            unique_id = itertools.count().__next__
 
             def visit(self, stmt):
                 return stmt
@@ -317,7 +319,7 @@ def test_container_loops():
         list_loop = parse_stmt("for value in items:\n    total = total + value")
         rewritten = handle_list_for(converter, list_loop)
         assert isinstance(rewritten, ast.For)
-        assert unparse(rewritten).startswith("for _li")
+        assert unparse(rewritten).startswith("for _li0 ")
         assert handle_list_for(converter, parse_stmt("for value in range(3):\n    pass")) is None
         assert handle_list_for(converter, parse_stmt("for value in missing:\n    pass")) is None
 
@@ -739,18 +741,22 @@ def test_ffi_methods():
             def __str__(self):
                 return "i64 3"
 
-        class OpcodeOne:
+        class Opcode:
+            def __init__(self, value):
+                self.value = value
+
             def __str__(self):
-                return "i64 1"
+                return f"i64 {self.value}"
 
         class OpcodeMissing:
             def __str__(self):
                 return "i64 99"
 
         assert FFIMethodHelper.value_from_llvm_value(LLVMValue()) == 3
-        assert FFIMethodHelper.name_to_opcode("method").value == 1
-        assert FFIMethodHelper.name_to_opcode("method").value == 1
-        assert FFIMethodHelper.opcode_to_name(OpcodeOne()) == "method"
+        opcode = FFIMethodHelper.name_to_opcode("method").value
+        assert FFIMethodHelper.name_to_opcode("method").value == opcode
+        assert FFIMethodHelper.name_to_opcode("other").value != opcode
+        assert FFIMethodHelper.opcode_to_name(Opcode(opcode)) == "method"
         with pytest.raises(ValueError, match="Opcode 99"):
             FFIMethodHelper.opcode_to_name(OpcodeMissing())
 
@@ -764,9 +770,9 @@ def test_ffi_methods():
             FFIMethodHelper.get_return_type(types.unicode_type)
 
         call = FFIMethodHelper.ffi_call(types.int64, ast.Name(id="obj", ctx=ast.Load()), "method", [ast.Constant(5)])
-        assert unparse(call) == "ffi_tuple_args(1, 1, (obj, 5))"
+        assert unparse(call) == f"ffi_tuple_args({opcode}, 1, (obj, 5))"
         call_without_obj = FFIMethodHelper.ffi_call(types.float64, None, "other", None)
-        assert unparse(call_without_obj) == "ffi_tuple_args(2, 1.0, ())"
+        assert unparse(call_without_obj) == f"ffi_tuple_args({FFIMethodHelper.name_to_opcode('other').value}, 1.0, ())"
 
         sig = types.int64(types.int64, types.int64, types.Tuple((types.int64, types.float64)))
         llvm_sig = FFIMethodHelper.numba_to_llvm_sig(sig)

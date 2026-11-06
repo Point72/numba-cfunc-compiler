@@ -44,7 +44,6 @@ class CompilationContext:
 
         # -- FFIMethodHelper state --
         self.ffi_opcode_cache: dict[str, int] = {}
-        self.ffi_next_opcode: int = 1
 
         # -- SourceCategory state --
         self.source_categories: list[Any] = []  # List[SourceCategory]

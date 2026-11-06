@@ -237,9 +237,6 @@ class NumbaDictType(ContainerType):
         return dict(value)
 
 
-_dict_for_counter = 0
-
-
 def _get_dict_var_from_for(converter, node):
     """
     Check if a For loop iterates over a NumbaDictType variable.
@@ -283,10 +280,7 @@ def handle_dict_for(converter, node):
     if var is None:
         return None
 
-    global _dict_for_counter
-    uid = _dict_for_counter
-    _dict_for_counter += 1
-
+    uid = converter.unique_id()
     dict_ref = var.get()
     state_name = f"_ds{uid}"
     index_name = f"_di{uid}"

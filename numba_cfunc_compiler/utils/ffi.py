@@ -1,6 +1,7 @@
 """FFI (Foreign Function Interface) utilities."""
 
 import ast
+import hashlib
 from typing import Any
 
 from llvmlite import ir
@@ -29,10 +30,13 @@ class FFIMethodHelper:
 
     @classmethod
     def name_to_opcode(cls, name: str) -> ast.Constant:
+        # Hash the name, not registration order, so the semantic key is stable across processes.
         ctx = CompilationContext.current()
         if name not in ctx.ffi_opcode_cache:
-            ctx.ffi_opcode_cache[name] = ctx.ffi_next_opcode
-            ctx.ffi_next_opcode += 1
+            opcode = int.from_bytes(hashlib.sha256(name.encode()).digest()[:6], "big")
+            if opcode in ctx.ffi_opcode_cache.values():
+                raise ValueError(f"FFI opcode collision for method {name!r}")
+            ctx.ffi_opcode_cache[name] = opcode
         return ast.Constant(value=ctx.ffi_opcode_cache[name])
 
     @staticmethod

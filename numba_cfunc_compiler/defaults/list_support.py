@@ -200,9 +200,6 @@ class NumbaListType(ContainerType):
         return list(value)
 
 
-_list_for_counter = 0
-
-
 def handle_list_for(converter, node):
     """
     Rewrite ``for`` loops over NumbaListType at the AST level.
@@ -224,10 +221,7 @@ def handle_list_for(converter, node):
     if var is None or not isinstance(var.type, NumbaListType):
         return None
 
-    global _list_for_counter
-    uid = _list_for_counter
-    _list_for_counter += 1
-
+    uid = converter.unique_id()
     list_ref = var.get()
     index_name = f"_li{uid}"
 

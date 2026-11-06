@@ -338,6 +338,22 @@ result = create_compiled_func(func, *args, options=opts, ...)
 
 Regardless of options, the exported wrapper symbol is renamed to `_ncc_numba_<semantic_key>`. `result.native_name`, `result.semantic_key`, and `result.llvm_ir` all reflect that final compiled form.
 
+### Compilation Cache
+
+The cache reuses the final LLVM IR for an already-compiled `semantic_key`, skipping Numba. Entries live in memory and, with a directory (default `$NUMBA_CFUNC_COMPILER_CACHE_DIR`), are shared across processes as `<semantic_key>.ll` files under an `ncc-<__version__>-numba-<version>-llvmlite-<version>/` subdirectory.
+
+```python
+from numba_cfunc_compiler.compilation_cache import CacheConfig, set_cache_config
+
+set_cache_config(CacheConfig(enabled=True, directory="/path/to/cache"))
+```
+
+The key covers the transformed source, compile options, and global constants the function reads, including through attributes (`params.WINDOW`, `Side.BUY`). Functions reading other globals, such as arrays, are not cached and emit a warning. The key does not cover called code (helpers, modules, types); clear the cache after changing it.
+
+**Bump `__version__`** for any change that alters the IR of an unchanged key, such as intrinsic codegen, post-compilation passes or the cache format; when testing such changes before a release, clear the cache. Changes to the generated source already change the key.
+
+Cache hits return `compiled_func=None`; everything else matches a fresh compile. IR with process-specific addresses (Numba dynamic globals) is never cached.
+
 ### FFI Optimization
 
 FFI function declarations are automatically annotated with `readonly` and `nounwind` attributes (in `utils/ffi.py`), enabling LLVM to perform CSE (common subexpression elimination) and LICM (loop-invariant code motion) on FFI calls.
@@ -368,7 +384,8 @@ Python Function
   → FunctionAnalyzer (parse params, state, outputs from annotations)
   → VariableFactory (create variable sources for each param/state/output)
   → NumbaASTConverter (rewrite AST via registered handlers)
-  → SHA-256 hash of transformed Python source + cfunc signature/options (semantic_key)
+  → SHA-256 hash of transformed Python source + cfunc signature/options + frozen global constants (semantic_key)
+  → CompilationCache lookup by semantic_key (when configured; a hit skips the next two steps)
   → Numba @cfunc (NRT library lazy-loaded; fastmath applied if enabled)
   → Post-compilation IR updates (optional force_inline, then exported symbol rename)
   → CompilationResult (cfunc + metadata + semantic_key + final native_name/llvm_ir)

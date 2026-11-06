@@ -9,6 +9,7 @@ from numba_cfunc_compiler.utils.llvm import LLVMIRHelper
 __all__ = [
     "CompilationOptions",
     "apply_post_compilation",
+    "exported_entry_point_name",
     "link_ffi_bitcode",
 ]
 
@@ -27,6 +28,10 @@ class CompilationOptions:
     force_inline: bool = False
 
 
+def exported_entry_point_name(semantic_key: str) -> str:
+    return f"_ncc_numba_{semantic_key}"
+
+
 def apply_post_compilation(
     compiled_func: Any,
     semantic_key: str,
@@ -34,7 +39,7 @@ def apply_post_compilation(
 ) -> tuple[str, str]:
     ir_text = compiled_func._library.get_llvm_str()
     raw_native_name = compiled_func.native_name
-    exported_entry_point = f"_ncc_numba_{semantic_key}"
+    exported_entry_point = exported_entry_point_name(semantic_key)
 
     if opts.force_inline:
         ir_text = LLVMIRHelper.force_inline(ir_text)

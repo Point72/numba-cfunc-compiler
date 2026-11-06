@@ -66,7 +66,7 @@ def test_enumset_ffi_call():
         method = ffi_method_factory({"contains": (EnumSetMarker, ())}, method_postfix="book")[0]
         source = LocalVariableSource(PrimitiveType(int, 1), "holder")
         call = ast.fix_missing_locations(method.handle(source, []))
-        assert ast.unparse(call) == "ffi_tuple_args(1, make_enumset(), (holder,))"
+        assert ast.unparse(call) == f"ffi_tuple_args({call.args[0].value}, make_enumset(), (holder,))"
 
 
 def test_ffi_llvm_types():

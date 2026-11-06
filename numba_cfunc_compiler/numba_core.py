@@ -10,13 +10,16 @@ import numba
 from numba import cfunc, float64, int8, int64
 from numba.types import CPointer
 
+from numba_cfunc_compiler.compilation_cache import compile_cached
 from numba_cfunc_compiler.compilation_context import CompilationContext
 from numba_cfunc_compiler.config import get_numba_config
+from numba_cfunc_compiler.frozen_globals import find_frozen_globals
 from numba_cfunc_compiler.function_analyzer import FunctionAnalyzer
 from numba_cfunc_compiler.numba_ast_converter import NumbaASTConverter
 from numba_cfunc_compiler.post_compilation import (
     CompilationOptions,
     apply_post_compilation,
+    exported_entry_point_name,
 )
 from numba_cfunc_compiler.source_registry import SourceRegistry
 from numba_cfunc_compiler.standalone.dict import (
@@ -63,7 +66,7 @@ class CompilationResult:
     :class:`SourceCategory`.
     """
 
-    compiled_func: Any
+    compiled_func: Any  # None on a cache hit
     output_types: list[type]
     named_outputs: dict | None  # None for single output
     native_name: str = ""
@@ -87,11 +90,15 @@ def _build_semantic_key(
     new_func_code: str,
     cfunc_sig: str,
     cfunc_kwargs: str,
+    force_inline: bool,
+    frozen_globals: dict[str, str],
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
         "cfunc_sig": cfunc_sig,
         "cfunc_kwargs": cfunc_kwargs,
+        "force_inline": force_inline,
+        "frozen_globals": frozen_globals,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -239,12 +246,44 @@ def create_compiled_func(
     cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
-    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs)
-    cfunc_code = f"""
-@cfunc({cfunc_sig}, {cfunc_kwargs})
-{new_func_code}
-"""
+    frozen_globals = find_frozen_globals(new_tree, call_globals)
+    semantic_key = _build_semantic_key(new_func_code, cfunc_sig, cfunc_kwargs, opts.force_inline, frozen_globals.constants)
 
+    def compile_fresh():
+        cfunc_code = f"\n@cfunc({cfunc_sig}, {cfunc_kwargs})\n{new_func_code}\n"
+        compiled_func = _compile_cfunc(name, cfunc_code, call_globals)
+        result_ir, _ = apply_post_compilation(compiled_func, semantic_key, opts)
+        return compiled_func, result_ir
+
+    compiled_func, result_ir = compile_cached(name, semantic_key, frozen_globals.unkeyable, compile_fresh)
+    exported_entry_point = exported_entry_point_name(semantic_key)
+
+    # --- build result ---
+    if info.output_analysis.named_outputs is not None:
+        output_types = list(info.output_analysis.named_outputs.values())
+        named_outputs = dict(info.output_analysis.named_outputs)
+    else:
+        output_types = list(info.output_analysis.output_types)
+        named_outputs = None
+
+    # Collect metadata from all registered source categories
+    result_metadata: dict = {}
+    for category in SourceRegistry.get_ordered():
+        result_metadata.update(category.get_result_metadata(info))
+
+    return CompilationResult(
+        compiled_func=compiled_func,
+        output_types=output_types,
+        named_outputs=named_outputs,
+        native_name=exported_entry_point,
+        semantic_key=semantic_key,
+        llvm_ir=result_ir,
+        metadata=result_metadata,
+    )
+
+
+def _compile_cfunc(name: str, cfunc_code: str, call_globals: dict | None):
+    """Compile the generated @cfunc source with Numba."""
     exec_globals = {}
     exec_globals.update(globals())
     if call_globals:
@@ -288,31 +327,4 @@ def create_compiled_func(
         }
     )
     exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
-
-    compiled_func = exec_globals[name]
-
-    # --- post-compilation IR transforms ---
-    result_ir, exported_entry_point = apply_post_compilation(compiled_func, semantic_key, opts)
-
-    # --- build result ---
-    if info.output_analysis.named_outputs is not None:
-        output_types = list(info.output_analysis.named_outputs.values())
-        named_outputs = dict(info.output_analysis.named_outputs)
-    else:
-        output_types = list(info.output_analysis.output_types)
-        named_outputs = None
-
-    # Collect metadata from all registered source categories
-    result_metadata: dict = {}
-    for category in SourceRegistry.get_ordered():
-        result_metadata.update(category.get_result_metadata(info))
-
-    return CompilationResult(
-        compiled_func=compiled_func,
-        output_types=output_types,
-        named_outputs=named_outputs,
-        native_name=exported_entry_point,
-        semantic_key=semantic_key,
-        llvm_ir=result_ir,
-        metadata=result_metadata,
-    )
+    return exec_globals[name]
