@@ -55,7 +55,7 @@ class CompilationCache:
             return llvm_ir
         try:
             llvm_ir = self._path(key).read_text()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return None
         with self._lock:
             self._memory[key] = llvm_ir

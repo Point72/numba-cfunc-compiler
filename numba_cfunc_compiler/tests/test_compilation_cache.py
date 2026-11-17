@@ -110,6 +110,18 @@ class TestCompilationCacheStore(unittest.TestCase):
             CompilationCache(tmp).put("k", "ir")
             self.assertEqual(CompilationCache(tmp).get("k"), "ir")
 
+    def test_unreadable_disk_text_is_a_miss_and_can_be_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = CompilationCache(tmp)
+            writer.put("k", "old ir")
+            writer._path("k").write_bytes(b"\xff\xfe\x00")
+            reader = CompilationCache(tmp)
+            error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            with mock.patch("pathlib.Path.read_text", side_effect=error):
+                self.assertIsNone(reader.get("k"))
+            reader.put("k", "rebuilt ir")
+            self.assertEqual(CompilationCache(tmp).get("k"), "rebuilt ir")
+
     def test_disk_versioned(self):
         with tempfile.TemporaryDirectory() as tmp:
             CompilationCache(tmp).put("k", "ir")
