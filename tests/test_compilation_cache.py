@@ -8,16 +8,20 @@ import types
 import unittest
 import warnings
 from contextlib import contextmanager
+from dataclasses import replace
 from unittest import mock
 
 import numpy as np
+from llvmlite import binding as llvm
 
 import numba_cfunc_compiler
 from numba_cfunc_compiler.api import NumbaDict, NumbaList, State, create_new_dict, create_new_list
 from numba_cfunc_compiler.compilation_cache import CacheConfig, CompilationCache, get_cache_config, set_cache_config
 from numba_cfunc_compiler.core.compile import create_compiled_func
+from numba_cfunc_compiler.core.postprocess import CompilationOptions
 from numba_cfunc_compiler.types.native.input import unwrap_source
 from tests.harness import CompiledNode, Signal, compile_function, numba_node, setup_standalone_context
+from tests.test_structs import ReorderedTypedQuoteType, TypedQuoteType, _compile, quote_price
 
 OFFSET = 1
 WEIGHTS = np.array([1.0, 2.0])
@@ -94,9 +98,9 @@ def cache_config(**kwargs):
         set_cache_config(previous)
 
 
-def compile_with_globals(func):
+def compile_with_globals(func, *, options=None):
     with setup_standalone_context():
-        return create_compiled_func(func, Signal(typ=float), extract_python_type_fn=lambda s: s.get_type(), call_globals=globals())
+        return create_compiled_func(func, Signal(typ=float), extract_python_type_fn=lambda s: s.get_type(), call_globals=globals(), options=options)
 
 
 class TestCompilationCacheStore(unittest.TestCase):
@@ -142,6 +146,26 @@ class TestCompileWithCache(unittest.TestCase):
             other = compile_function(scale_and_shift, factor=4)
         self.assertIsNotNone(other.compiled_func)
 
+    def test_compilation_options_keyed(self):
+        with cache_config():
+            original = compile_with_globals(reads_module_only)
+            for options in (CompilationOptions(force_inline=True), CompilationOptions(fastmath=True)):
+                with self.subTest(options=options):
+                    changed = compile_with_globals(reads_module_only, options=options)
+                    self.assertIsNotNone(changed.compiled_func)
+                    self.assertNotEqual(changed.semantic_key, original.semantic_key)
+                    self.assertIsNone(compile_with_globals(reads_module_only, options=options).compiled_func)
+
+    def test_native_layouts_keyed(self):
+        with cache_config():
+            first = _compile(quote_price, TypedQuoteType)
+            cached = _compile(quote_price, TypedQuoteType)
+            reordered = _compile(quote_price, ReorderedTypedQuoteType)
+        self.assertIsNone(cached.compiled_func)
+        self.assertEqual(first.semantic_key, cached.semantic_key)
+        self.assertIsNotNone(reordered.compiled_func)
+        self.assertNotEqual(first.semantic_key, reordered.semantic_key)
+
     def test_array_global_not_cached(self):
         with tempfile.TemporaryDirectory() as tmp, cache_config(directory=tmp):
             with self.assertWarnsRegex(UserWarning, "Not caching 'reads_global_array'.*WEIGHTS"):
@@ -175,13 +199,26 @@ class TestCompileWithCache(unittest.TestCase):
             (running_list_sum, [[1], [2], [3]], [1, 3, 6]),
             (running_dict_sum, [[1, 10], [2, 20], [1, 5]], [10, 30, 25]),
         ]:
-            with self.subTest(func.__name__):
+            with self.subTest(func.__name__), cache_config():
                 first = compile_function(func)
                 second = compile_function(func)
                 self.assertEqual(first.semantic_key, second.semantic_key)
-                node = CompiledNode(second, input_types=[int] * len(inputs[0])).start()
-                self.assertEqual([node.execute(x)[0] for x in inputs], expected)
-                node.stop()
+                self.assertIsNone(second.compiled_func)
+                self.assertEqual(first.outputs, second.outputs)
+                self.assertEqual(first.state_values, second.state_values)
+                self.assertEqual(first.constant_container_indices, second.constant_container_indices)
+                # Load the cached IR as a host would: a cache hit has no Numba cfunc.
+                machine = llvm.Target.from_default_triple().create_target_machine()
+                with llvm.create_mcjit_compiler(llvm.parse_assembly(second.llvm_ir), machine) as engine:
+                    engine.finalize_object()
+                    address = engine.get_function_address(second.native_name)
+                    self.assertNotEqual(address, 0)
+                    executable = replace(second, compiled_func=types.SimpleNamespace(address=address))
+                    node = CompiledNode(executable, input_types=[int] * len(inputs[0])).start()
+                    try:
+                        self.assertEqual([node.execute(x)[0] for x in inputs], expected)
+                    finally:
+                        node.stop()
 
     def test_cross_process_hit(self):
         script = (
