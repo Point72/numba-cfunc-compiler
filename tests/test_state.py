@@ -17,7 +17,6 @@ from numba_cfunc_compiler.core.defaults import register_all
 from numba_cfunc_compiler.extension.callback_components import ComponentRegistry
 from numba_cfunc_compiler.types.base import HostType
 from numba_cfunc_compiler.types.builtin.enum.host import register_enum_family
-from numba_cfunc_compiler.types.builtin.struct.host import StructFieldInfo, StructHostType
 from numba_cfunc_compiler.types.factory import HostTypeFactory
 from numba_cfunc_compiler.types.native.state import copy_state_payload
 from tests.harness import (
@@ -32,6 +31,7 @@ from tests.harness import (
     numba_node,
     setup_standalone_context,
 )
+from tests.helpers import CtypesStructHostType
 
 
 @numba_node
@@ -314,34 +314,12 @@ class OtherQuote(ctypes.Structure):
     _fields_ = [("count", ctypes.c_int64), ("price", ctypes.c_double)]
 
 
-class QuoteType(StructHostType):
-    @classmethod
-    def is_type_supported(cls, var_type):
-        return var_type is Quote
-
-    @classmethod
-    def get_struct_fields(cls, var_type):
-        return {
-            "price": StructFieldInfo("price", Quote.price.offset, "float64", 8),
-            "count": StructFieldInfo("count", Quote.count.offset, "int64", 8),
-        }
-
-    @classmethod
-    def get_struct_size(cls, var_type):
-        return ctypes.sizeof(Quote)
+class QuoteType(CtypesStructHostType):
+    storage_type = Quote
 
 
 class OtherQuoteType(QuoteType):
-    @classmethod
-    def is_type_supported(cls, var_type):
-        return var_type is OtherQuote
-
-    @classmethod
-    def get_struct_fields(cls, var_type):
-        return {
-            "price": StructFieldInfo("price", OtherQuote.price.offset, "float64", 8),
-            "count": StructFieldInfo("count", OtherQuote.count.offset, "int64", 8),
-        }
+    storage_type = OtherQuote
 
 
 @numba_node
