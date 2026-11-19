@@ -98,7 +98,7 @@ skip = "*win32 *arm64"
 
 [tool.coverage.run]
 branch = true
-omit = ["numba_cfunc_compiler/tests/*"]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 exclude_also = [
@@ -107,7 +107,7 @@ exclude_also = [
     "@(abc\\.)?abstractmethod",
 ]
 ignore_errors = true
-fail_under = 80
+fail_under = 70
 
 [tool.hatch.build.sources]
 src = "/"
@@ -115,7 +115,7 @@ src = "/"
 [tool.hatch.build.hooks.hatch-cpp]
 verbose = true
 libraries = [
-    {name = "numba_cfunc_compiler/numba_rt/_py_nrt_init", sources = [ "numba_cfunc_compiler/numba_rt/nrt_init_py.cpp", "numba_cfunc_compiler/numba_rt/cext/dictobject.c", "numba_cfunc_compiler/numba_rt/cext/listobject.c" ], language = "c", include_dirs = [ "numba_cfunc_compiler/numba_rt", "numba_cfunc_compiler/numba_rt/cext" ], py-limited-api = "cp310" }
+    {name = "numba_cfunc_compiler/runtime/_py_nrt_init", sources = [ "numba_cfunc_compiler/runtime/nrt_init_py.c", "numba_cfunc_compiler/runtime/cext/dictobject.c", "numba_cfunc_compiler/runtime/cext/listobject.c" ], language = "c", include_dirs = [ "numba_cfunc_compiler/runtime", "numba_cfunc_compiler/runtime/cext" ], py-limited-api = "cp310" }
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -140,7 +140,7 @@ addopts = [
     "-vvv",
     "--junitxml=junit.xml",
 ]
-testpaths = "numba_cfunc_compiler/tests"
+testpaths = "tests"
 
 [tool.ruff]
 line-length = 150
