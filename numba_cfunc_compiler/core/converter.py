@@ -10,6 +10,7 @@ from numba_cfunc_compiler.core.variable_factory import VariableFactory
 
 __all__ = [
     "NumbaASTConverter",
+    "NumbaMethodASTConverter",
 ]
 
 from numba_cfunc_compiler.extension.ast import (
@@ -38,6 +39,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         call_globals: dict | None = None,
         host_globals: dict | None = None,
         state_names: frozenset[str] = frozenset(),
+        method_manager=None,
     ):
         self.tree = tree
         self.variable_factory = variable_factory
@@ -46,6 +48,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         self.start_body = start_body or []
         self.stop_body = stop_body or []
         self.state_names = state_names
+        self.method_manager = method_manager
         self._state_aug_index = 0
         self.current_body: LifecycleBody | None = None
         for body in (tree, *self.start_body, *self.stop_body):
@@ -194,6 +197,10 @@ class NumbaASTConverter(ast.NodeTransformer):
 
     @with_handlers("Call")
     def visit_Call(self, node):
+        if self.method_manager is not None:
+            lowered = self.method_manager.rewrite_call(node, self)
+            if lowered is not None:
+                return self.generic_visit(lowered)
         return self.generic_visit(node)
 
     @with_handlers("Expr")
@@ -315,3 +322,22 @@ class NumbaASTConverter(ast.NodeTransformer):
             return None
 
         return self.generic_visit(node)
+
+
+class NumbaMethodASTConverter(NumbaASTConverter):
+    """Apply node AST handlers to a helper without changing its Python ABI."""
+
+    def visit_FunctionDef(self, node):
+        body = []
+        for statement in node.body:
+            add_statement_to_list(body, self.visit(statement))
+        node.body = body
+        return ast.fix_missing_locations(node)
+
+    def visit_Return(self, node):
+        return self.generic_visit(node)
+
+    def visit_Expr(self, node):
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "set_output":
+            raise TypeError("@numba_method helpers cannot emit node outputs")
+        return super().visit_Expr(node)
