@@ -305,7 +305,8 @@ def create_compiled_func(
         result_ir, _ = apply_post_compilation(compiled_func, semantic_key, opts)
         return compiled_func, result_ir
 
-    compiled_func, result_ir = compile_cached(name, semantic_key, frozen_globals.unkeyable, compile_fresh)
+    unkeyable = sorted(set(frozen_globals.unkeyable) | method_manager.unkeyable)
+    compiled_func, result_ir = compile_cached(name, semantic_key, unkeyable, compile_fresh)
 
     return CompilationResult(
         compiled_func=compiled_func,

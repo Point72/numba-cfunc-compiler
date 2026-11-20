@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import hashlib
 import inspect
 import json
@@ -16,6 +17,7 @@ from numba.extending import register_jitable
 
 from numba_cfunc_compiler.core.converter import NumbaMethodASTConverter
 from numba_cfunc_compiler.core.variable_factory import VariableFactory
+from numba_cfunc_compiler.frozen_globals import _constant_text, find_frozen_globals
 
 __all__ = ["numba_method"]
 
@@ -54,16 +56,17 @@ def numba_method(func: _F | None = None, *, force_inline: bool = True) -> _F | C
 
 def _function_ast(func: Callable) -> ast.FunctionDef:
     try:
-        source = textwrap.dedent(inspect.getsource(func))
+        lines, first_line = inspect.getsourcelines(func)
+        source = textwrap.dedent("".join(lines))
     except (OSError, TypeError) as exc:
         raise TypeError(f"Unable to inspect function '{func.__qualname__}'") from exc
     functions = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)]
     if len(functions) != 1:
         raise TypeError(f"Unable to identify function '{func.__qualname__}' in its source")
-    return functions[0]
+    return ast.increment_lineno(functions[0], first_line - 1)
 
 
-def _validate_helper(func: Callable, node: ast.FunctionDef) -> set[str]:
+def _validate_helper(func: Callable, node: ast.FunctionDef) -> dict[str, Any]:
     for child in ast.walk(node):
         if child is not node and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot contain nested functions or classes")
@@ -75,19 +78,24 @@ def _validate_helper(func: Callable, node: ast.FunctionDef) -> set[str]:
                 raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot declare State")
         if isinstance(child, (ast.Yield, ast.YieldFrom, ast.Await)):
             raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot be a generator or coroutine")
+        if isinstance(child, (ast.Global, ast.Nonlocal, ast.Import, ast.ImportFrom)):
+            raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot contain {type(child).__name__} at line {child.lineno}")
 
-    closure = inspect.getclosurevars(func)
-    loads = {child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)}
-    missing = closure.unbound & loads
-    if missing:
-        raise NameError(f"@numba_method helper '{func.__qualname__}' has unbound names: {', '.join(sorted(missing))}")
-    symbols = set()
-    for name, value in {**closure.globals, **closure.nonlocals}.items():
-        if _method_options(value) is not None or isinstance(value, (types.ModuleType, type)):
-            symbols.add(name)
-        else:
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' captures '{name}'; pass it as a helper argument")
-    return symbols
+    namespace = dict(func.__globals__)
+    namespace.update((name, cell.cell_contents) for name, cell in zip(func.__code__.co_freevars, func.__closure__ or ()))
+    local = _local_names(node)
+    body = ast.Module(body=node.body, type_ignores=[])
+    loads = {child.id for child in ast.walk(body) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)}
+    builtin_namespace = getattr(func, "__builtins__", vars(builtins))
+    for name in sorted(loads - local):
+        if name not in namespace:
+            if name in builtin_namespace:
+                continue
+            raise NameError(f"@numba_method helper '{func.__qualname__}' has unbound name '{name}'")
+        value = namespace[name]
+        if _method_options(value) is None and not isinstance(value, (types.ModuleType, type)) and _constant_text(value) is None:
+            raise TypeError(f"@numba_method helper '{func.__qualname__}' captures '{name}' ({type(value).__name__}); pass it as a helper argument")
+    return namespace
 
 
 def _local_names(tree: ast.AST) -> set[str]:
@@ -96,7 +104,8 @@ def _local_names(tree: ast.AST) -> set[str]:
     if function is None:
         return set()
     names = {arg.arg for arg in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)}
-    names.update(node.id for node in ast.walk(function) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store))
+    names.update(node.id for node in ast.walk(function) if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load))
+    names.update(node.name for node in ast.walk(function) if isinstance(node, ast.ExceptHandler) and node.name)
     return names
 
 
@@ -118,6 +127,7 @@ class NumbaMethodManager:
         self.lowered_names: dict[Callable, str] = {}
         self.active: set[Callable] = set()
         self.next_id = 0
+        self.unkeyable: set[str] = set()
 
     def rewrite_call(self, call: ast.Call, converter) -> ast.Call | None:
         function = call.func
@@ -171,16 +181,13 @@ class NumbaMethodManager:
         if any(isinstance(arg, ast.Starred) for arg in call.args) or any(keyword.arg is None for keyword in call.keywords):
             raise TypeError(f"@numba_method helper '{helper.__qualname__}' requires named variable arguments")
         try:
-            bound = signature.bind(*call.args, **{keyword.arg: keyword.value for keyword in call.keywords})
+            signature.bind(*call.args, **{keyword.arg: keyword.value for keyword in call.keywords})
         except TypeError as exc:
             raise TypeError(f"Invalid call to @numba_method helper '{helper.__qualname__}': {exc}") from exc
-        for name, argument in bound.arguments.items():
-            if not isinstance(argument, ast.Name):
-                raise TypeError(f"@numba_method helper '{helper.__qualname__}' argument '{name}' must be a named variable")
 
     def _lower(self, helper: Callable) -> str:
         node = _function_ast(helper)
-        symbols = _validate_helper(helper, node)
+        namespace = _validate_helper(helper, node)
         name = f"__ncc_method_{self.next_id}"
         self.next_id += 1
         node.name = name
@@ -188,15 +195,9 @@ class NumbaMethodManager:
         node.returns = None
         for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
             arg.annotation = None
-        closure = inspect.getclosurevars(helper)
-        namespace = dict(helper.__globals__)
-        namespace.update(closure.nonlocals)
         factory = VariableFactory()
         converter = NumbaMethodASTConverter(node, factory, call_globals=namespace, host_globals=namespace, method_manager=self)
         lowered = converter.visit(node)
-        remaining = symbols & {child.id for child in ast.walk(lowered) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)}
-        if remaining:
-            raise TypeError(f"@numba_method helper '{helper.__qualname__}' has unresolved global symbols: {', '.join(sorted(remaining))}")
         self.variable_factory.typed_struct_bindings.update(factory.typed_struct_bindings)
         self.variable_factory.typed_struct_layouts.update(factory.typed_struct_layouts)
         self.variable_factory.typed_input_bindings.update(factory.typed_input_bindings)
@@ -204,7 +205,14 @@ class NumbaMethodManager:
         options = _method_options(helper)
         assert options is not None
         self.definitions.append(_Definition(helper, lowered, converter.call_globals, options))
-        payload = {"lowered": ast.dump(lowered, include_attributes=False), "force_inline": options.force_inline}
+        frozen = find_frozen_globals(lowered, converter.call_globals)
+        self.unkeyable.update(f"{helper.__qualname__}.{path}" for path in frozen.unkeyable)
+        payload = {
+            "lowered": ast.dump(lowered, include_attributes=False),
+            "force_inline": options.force_inline,
+            "lowering_version": 3,
+            "frozen_globals": frozen.constants,
+        }
         self.hashes[name] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         return name
 
@@ -212,8 +220,8 @@ class NumbaMethodManager:
         bindings = {}
         namespaces = []
         for definition in self.definitions:
-            namespace = dict(definition.namespace)
-            namespace.update(compiler_globals)
+            namespace = dict(compiler_globals)
+            namespace.update(definition.namespace)
             tree = ast.fix_missing_locations(ast.Module(body=[definition.node], type_ignores=[]))
             exec(compile(tree, definition.helper.__code__.co_filename, "exec"), namespace)  # noqa: S102 - lowered helper source
             name = definition.node.name

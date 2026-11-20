@@ -2,6 +2,7 @@
 
 import ctypes
 import enum
+import math
 import types
 
 import pytest
@@ -80,7 +81,7 @@ def repeated_method(x: Signal[int], y: Signal[float]) -> Signal[float]:
 
 
 @numba_node
-def invalid_second_method_call(x: Signal[int]) -> Signal[int]:
+def second_expression_call(x: Signal[int]) -> Signal[int]:
     first = plus_two(x)
     return first + plus_two(x + 1)
 
@@ -127,7 +128,7 @@ def captured_global(value):
 
 
 @numba_node
-def invalid_capture(x: Signal[int]) -> Signal[int]:
+def constant_capture(x: Signal[int]) -> Signal[int]:
     return captured_global(x)
 
 
@@ -238,8 +239,8 @@ def test_repeated_helper_is_lowered_once_but_each_call_is_validated(monkeypatch)
     node = CompiledNode(result, input_types=[int, float]).start()
     assert node.execute([3, 1.5])[0] == 8.5
 
-    with pytest.raises(TypeError, match="must be a named variable"):
-        compile_function(invalid_second_method_call)
+    result = compile_function(second_expression_call)
+    assert CompiledNode(result, input_types=[int]).start().execute([3])[0] == 11
 
 
 def test_call_globals_and_closure_helpers_change_semantic_key():
@@ -264,13 +265,86 @@ def test_keyword_calls_reject_keyword_only_helper_parameters():
 
 
 def test_invalid_calls():
-    with pytest.raises(TypeError, match="must be a named variable"):
-        compile_function(expression_argument)
-    with pytest.raises(TypeError, match="captures 'OFFSET'"):
-        compile_function(invalid_capture)
     with pytest.raises(TypeError, match="Recursive @numba_method"):
         compile_function(invalid_recursion)
     with pytest.raises(TypeError, match="cannot declare default arguments"):
         compile_function(invalid_default)
     with pytest.raises(TypeError, match="force_inline must be a bool"):
         numba_method(force_inline=1)
+
+
+@numba_method
+def module_math(value):
+    floor = math.floor(value)
+    return floor + math.pi
+
+
+@numba_node
+def module_math_node(x: Signal[float]) -> Signal[float]:
+    return module_math(x * 1.0)
+
+
+def test_helper_modules_and_attribute_names():
+    node = CompiledNode(compile_function(module_math_node), input_types=[float]).start()
+    assert node.execute([2.9])[0] == 2 + math.pi
+
+
+def test_helper_constants_change_semantic_key(monkeypatch):
+    before = compile_function(constant_capture)
+    monkeypatch.setitem(globals(), "OFFSET", 8)
+    after = compile_function(constant_capture)
+    assert before.semantic_key != after.semantic_key
+    assert CompiledNode(before, input_types=[int]).start().execute([3])[0] == 5
+    assert CompiledNode(after, input_types=[int]).start().execute([3])[0] == 11
+
+
+def test_helper_closure_constants_and_namespace_isolation():
+    OFFSET = 13
+
+    @numba_method
+    def offset(value):
+        return value + OFFSET
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return offset(x + 1)
+
+    result = compile_function(node)
+    assert CompiledNode(result, input_types=[int]).start().execute([2])[0] == 16
+
+
+def test_helper_expression_evaluation_order_and_short_circuit():
+    @numba_method
+    def push(values, value):
+        values.append(value)
+        return len(values)
+
+    @numba_method
+    def combine(first, second):
+        return first * 10 + second
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        values: State[NumbaList] = create_new_list(int)
+        return combine(push(values, x + 1), second=push(values, x + 2)) if x > 0 else len(values)
+
+    compiled = CompiledNode(compile_function(node), input_types=[int]).start()
+    try:
+        assert [compiled.execute([value])[0] for value in (0, 1, 0, 1)] == [0, 12, 2, 34]
+    finally:
+        compiled.stop()
+
+
+def test_helper_rejects_mutable_capture():
+    values = [1]
+
+    @numba_method
+    def lookup(value):
+        return values[value]
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return lookup(x)
+
+    with pytest.raises(TypeError, match="captures 'values' \\(list\\)"):
+        compile_function(node)
