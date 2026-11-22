@@ -373,8 +373,8 @@ local and never becomes a state store target; Numba types ordinary local
 reassignments. Invalid state stores report the declared name and RHS Numba
 type.
 
-For the generated code, supported syntax, and copy versus borrowed alias
-behavior, see [How state stores work](docs/current-architecture.md#5-how-state-stores-work).
+For examples of supported state assignments and copy versus borrowed alias behavior,
+see the [state assignment tests](tests/test_state.py).
 
 ## Compilation Options & Post-Compilation Transforms
 
