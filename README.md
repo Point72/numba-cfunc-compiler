@@ -70,12 +70,11 @@ Enum and enumset ABI layouts come from the registered enum family and host type 
 
 ## Numba Methods
 
-Use `@numba_method` for reusable logic called by a compiled node:
+Ordinary Python helper functions are compiled automatically when called by a compiled node:
 
 ```python
-from numba_cfunc_compiler.api import State, numba_method
+from numba_cfunc_compiler.api import State
 
-@numba_method
 def ema_step(previous, value, alpha):
     return alpha * value + (1.0 - alpha) * previous
 
@@ -86,9 +85,11 @@ def ema(value: Signal[float], alpha: float) -> Signal[float]:
     return previous
 ```
 
-Methods remain ordinary Python functions outside compiled nodes. Pass node values and state explicitly; return scalar state updates and assign them in the node. Mutable list and dict state can be changed through arguments. Helper calls accept named variables, including node locals, and can call other `@numba_method` helpers or module-qualified helpers. Their bodies use the active compilation context's AST handlers and native types.
+Helpers remain ordinary Python functions outside compiled nodes. Pass node values and state explicitly; return scalar state updates and assign them in the node. Mutable list and dict state can be changed through arguments. Helper calls accept variables and expressions, and can call other helpers, including imported and module-qualified functions. Their bodies use the active compilation context's AST handlers and native types.
 
-Inlining is requested by default. Use `@numba_method(force_inline=False)` to disable that request. Helpers cannot declare `State`, emit node outputs, use default arguments or nested scopes, or capture runtime globals and closure data. Supply those values as arguments. Each helper body and inline setting contributes to the compiled semantic key.
+Inlining is requested by default. The optional `numba_method` decorator, imported from `numba_cfunc_compiler.api`, remains supported; use `@numba_method(force_inline=False)` to disable that request. Functions already recognized by Numba, such as supported NumPy functions, `@njit` functions, and functions registered with `@register_jitable` or `@overload`, retain their existing Numba behavior unless explicitly marked with `@numba_method`.
+
+Automatically compiled helpers require inspectable Python source. Bound instance methods and dynamically selected local callables are not automatically compiled. Helpers cannot declare `State`, emit node outputs, use recursion, default arguments, keyword-only parameters or nested scopes, or capture mutable runtime globals and closure data. Supply runtime values as arguments; supported immutable constants can be captured and contribute to the compiled semantic key along with each helper body and inline setting.
 
 ______________________________________________________________________
 

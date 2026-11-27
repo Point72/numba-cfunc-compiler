@@ -29,8 +29,8 @@ from numba_cfunc_compiler.core.postprocess import (
 )
 from numba_cfunc_compiler.extension.callback_components import ComponentRegistry
 from numba_cfunc_compiler.frozen_globals import find_frozen_globals
-from numba_cfunc_compiler.types.builtin.array.native import standalone_array_new, standalone_array_readonly
 from numba_cfunc_compiler.numba_methods import NumbaMethodManager
+from numba_cfunc_compiler.types.builtin.array.native import standalone_array_new, standalone_array_readonly
 from numba_cfunc_compiler.types.builtin.dict.native import (
     standalone_dict_free,
     standalone_dict_from_voidptr,

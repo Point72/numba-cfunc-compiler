@@ -13,6 +13,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from numba import types as numba_types
+from numba.core.compiler_lock import global_compiler_lock
+from numba.core.registry import cpu_target
 from numba.extending import register_jitable
 
 from numba_cfunc_compiler.core.converter import NumbaMethodASTConverter
@@ -35,8 +38,18 @@ def _method_options(value: Any) -> _MethodOptions | None:
     return options if inspect.isfunction(value) and isinstance(options, _MethodOptions) else None
 
 
+def _is_numba_callable(value: Any) -> bool:
+    """Preserve functions with existing Numba typing, including overloads."""
+    if not callable(value):
+        return False
+    try:
+        return isinstance(cpu_target.typing_context.resolve_value_type(value), numba_types.Callable)
+    except ValueError:
+        return False
+
+
 def numba_method(func: _F | None = None, *, force_inline: bool = True) -> _F | Callable[[_F], _F]:
-    """Mark a Python helper for compilation in the calling node's context."""
+    """Optionally configure a Python helper compiled in the calling node's context."""
     if not isinstance(force_inline, bool):
         raise TypeError("@numba_method force_inline must be a bool")
 
@@ -69,17 +82,17 @@ def _function_ast(func: Callable) -> ast.FunctionDef:
 def _validate_helper(func: Callable, node: ast.FunctionDef) -> dict[str, Any]:
     for child in ast.walk(node):
         if child is not node and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot contain nested functions or classes")
+            raise TypeError(f"Compiled helper '{func.__qualname__}' cannot contain nested functions or classes")
         if isinstance(child, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot contain nested scopes")
+            raise TypeError(f"Compiled helper '{func.__qualname__}' cannot contain nested scopes")
         if isinstance(child, ast.AnnAssign) and isinstance(child.annotation, ast.Subscript):
             annotation = child.annotation.value
             if isinstance(annotation, ast.Name) and annotation.id == "State":
-                raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot declare State")
+                raise TypeError(f"Compiled helper '{func.__qualname__}' cannot declare State")
         if isinstance(child, (ast.Yield, ast.YieldFrom, ast.Await)):
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot be a generator or coroutine")
+            raise TypeError(f"Compiled helper '{func.__qualname__}' cannot be a generator or coroutine")
         if isinstance(child, (ast.Global, ast.Nonlocal, ast.Import, ast.ImportFrom)):
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' cannot contain {type(child).__name__} at line {child.lineno}")
+            raise TypeError(f"Compiled helper '{func.__qualname__}' cannot contain {type(child).__name__} at line {child.lineno}")
 
     namespace = dict(func.__globals__)
     namespace.update((name, cell.cell_contents) for name, cell in zip(func.__code__.co_freevars, func.__closure__ or ()))
@@ -91,10 +104,15 @@ def _validate_helper(func: Callable, node: ast.FunctionDef) -> dict[str, Any]:
         if name not in namespace:
             if name in builtin_namespace:
                 continue
-            raise NameError(f"@numba_method helper '{func.__qualname__}' has unbound name '{name}'")
+            raise NameError(f"Compiled helper '{func.__qualname__}' has unbound name '{name}'")
         value = namespace[name]
-        if _method_options(value) is None and not isinstance(value, (types.ModuleType, type)) and _constant_text(value) is None:
-            raise TypeError(f"@numba_method helper '{func.__qualname__}' captures '{name}' ({type(value).__name__}); pass it as a helper argument")
+        if (
+            not inspect.isfunction(value)
+            and not isinstance(value, (types.ModuleType, type))
+            and _constant_text(value) is None
+            and not _is_numba_callable(value)
+        ):
+            raise TypeError(f"Compiled helper '{func.__qualname__}' captures '{name}' ({type(value).__name__}); pass it as a helper argument")
     return namespace
 
 
@@ -121,6 +139,11 @@ class NumbaMethodManager:
     """Lower each helper call with the active node's AST handlers."""
 
     def __init__(self, variable_factory: VariableFactory):
+        # Numba installs some library overloads lazily. Load them before deciding
+        # which Python functions need our AST lowering, even on the first compile.
+        with global_compiler_lock:
+            cpu_target.target_context.refresh()
+            cpu_target.typing_context.refresh()
         self.variable_factory = variable_factory
         self.definitions: list[_Definition] = []
         self.hashes: dict[str, str] = {}
@@ -150,10 +173,12 @@ class NumbaMethodManager:
                 helper = getattr(helper, attribute)
         except AttributeError:
             return None
-        if _method_options(helper) is None:
+        if not inspect.isfunction(helper):
+            return None
+        if _method_options(helper) is None and _is_numba_callable(helper):
             return None
         if helper in self.active:
-            raise TypeError(f"Recursive @numba_method helper call involving '{helper.__qualname__}' is not supported")
+            raise TypeError(f"Recursive compiled helper call involving '{helper.__qualname__}' is not supported")
         self._validate_call(call, helper)
         name = self.lowered_names.get(helper)
         if name is None:
@@ -173,17 +198,17 @@ class NumbaMethodManager:
         if keyword_only:
             names = ", ".join(keyword_only)
             raise TypeError(
-                f"@numba_method helper '{helper.__qualname__}' cannot declare keyword-only parameters ({names}); "
+                f"Compiled helper '{helper.__qualname__}' cannot declare keyword-only parameters ({names}); "
                 "Numba cannot call them from compiled code; use regular parameters instead"
             )
         if any(param.default is not inspect.Parameter.empty for param in signature.parameters.values()):
-            raise TypeError(f"@numba_method helper '{helper.__qualname__}' cannot declare default arguments; pass every argument explicitly")
+            raise TypeError(f"Compiled helper '{helper.__qualname__}' cannot declare default arguments; pass every argument explicitly")
         if any(isinstance(arg, ast.Starred) for arg in call.args) or any(keyword.arg is None for keyword in call.keywords):
-            raise TypeError(f"@numba_method helper '{helper.__qualname__}' requires named variable arguments")
+            raise TypeError(f"Compiled helper '{helper.__qualname__}' requires named variable arguments")
         try:
             signature.bind(*call.args, **{keyword.arg: keyword.value for keyword in call.keywords})
         except TypeError as exc:
-            raise TypeError(f"Invalid call to @numba_method helper '{helper.__qualname__}': {exc}") from exc
+            raise TypeError(f"Invalid call to compiled helper '{helper.__qualname__}': {exc}") from exc
 
     def _lower(self, helper: Callable) -> str:
         node = _function_ast(helper)
@@ -202,8 +227,7 @@ class NumbaMethodManager:
         self.variable_factory.typed_struct_layouts.update(factory.typed_struct_layouts)
         self.variable_factory.typed_input_bindings.update(factory.typed_input_bindings)
         self.variable_factory.typed_keyed_bindings.update(factory.typed_keyed_bindings)
-        options = _method_options(helper)
-        assert options is not None
+        options = _method_options(helper) or _MethodOptions(force_inline=True)
         self.definitions.append(_Definition(helper, lowered, converter.call_globals, options))
         frozen = find_frozen_globals(lowered, converter.call_globals)
         self.unkeyable.update(f"{helper.__qualname__}.{path}" for path in frozen.unkeyable)

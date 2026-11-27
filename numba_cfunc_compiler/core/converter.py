@@ -339,5 +339,5 @@ class NumbaMethodASTConverter(NumbaASTConverter):
 
     def visit_Expr(self, node):
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "set_output":
-            raise TypeError("@numba_method helpers cannot emit node outputs")
+            raise TypeError("Compiled helpers cannot emit node outputs")
         return super().visit_Expr(node)
