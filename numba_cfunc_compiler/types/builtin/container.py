@@ -49,11 +49,12 @@ def ensure_no_local(constructor: str, state_type: str) -> None:
         if is_constructor_call(node.value):
             require_container_state_initializer(node, state_type, body=converter.current_body)
 
-    @ast_handler("Call", post=True)
-    def reject_local_constructor(converter, node: ast.Call, result):
+    # Valid state initializers are consumed by AnnAssign handlers. Reject every
+    # remaining constructor before automatic helper lowering can rewrite it.
+    @ast_handler("Call", pre=True)
+    def reject_local_constructor(converter, node: ast.Call):
         if is_constructor_call(node):
             reject_container_constructor(node, state_type)
-        return result
 
 
 def container_state_plan(host_type, variable) -> StatePlan:

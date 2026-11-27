@@ -1,0 +1,465 @@
+"""Helpers compiled in the calling node's Numba context."""
+
+import ctypes
+import enum
+import math
+import subprocess
+import sys
+import types
+
+import numpy as np
+import pytest
+from numba import njit
+from numba.extending import overload, register_jitable
+
+from numba_cfunc_compiler import numba_methods
+from numba_cfunc_compiler.api import NumbaList, State, create_new_list, numba_method
+from numba_cfunc_compiler.types.builtin.enum.host import register_enum_family
+from tests.harness import CompiledNode, Signal, compile_function, numba_node
+from tests.test_structs import Quote, TypedQuoteType, _compile, _execute
+
+
+@numba_method
+def advance(total, value):
+    value += 1
+    return total + value
+
+
+@numba_node
+def accumulate_with_method(x: Signal[int]) -> Signal[int]:
+    total: State[int] = 0
+    total = advance(total, x)
+    return total
+
+
+def append_and_count(values, value):
+    values.append(value)
+    return len(values)
+
+
+@numba_node
+def method_mutates_list(x: Signal[int]) -> Signal[int]:
+    values: State[NumbaList] = create_new_list(int)
+    return append_and_count(values, x)
+
+
+def plus_two(value):
+    return value + 2
+
+
+@numba_method(force_inline=False)
+def plus_three(value):
+    return value + 3
+
+
+@numba_method(force_inline=False)
+def plus_two_without_inline(value):
+    return value + 2
+
+
+def keyword_only_plus(value, *, offset):
+    return value + offset
+
+
+@numba_method
+def call_plus_two(value):
+    return plus_two(value)
+
+
+METHOD_MODULE = types.ModuleType("method_test_module")
+METHOD_MODULE.apply = plus_two
+INJECTED_METHOD = None
+
+
+@numba_node
+def nested_method(x: Signal[int]) -> Signal[int]:
+    local = x
+    return call_plus_two(local)
+
+
+@numba_node
+def repeated_method(x: Signal[int], y: Signal[float]) -> Signal[float]:
+    return plus_two(x) + plus_two(y)
+
+
+@numba_node
+def second_expression_call(x: Signal[int]) -> Signal[int]:
+    first = plus_two(x)
+    return first + plus_two(x + 1)
+
+
+@numba_node
+def module_method(x: Signal[int]) -> Signal[int]:
+    return METHOD_MODULE.apply(x)
+
+
+@numba_node
+def injected_method(x: Signal[int]) -> Signal[int]:
+    return INJECTED_METHOD(x)
+
+
+def closure_method(method):
+    @numba_node
+    def call_method(x: Signal[int]) -> Signal[int]:
+        return method(x)
+
+    return call_method
+
+
+@numba_node
+def keyword_argument_method(x: Signal[int]) -> Signal[int]:
+    return plus_two(value=x)
+
+
+@numba_node
+def keyword_only_method(x: Signal[int]) -> Signal[int]:
+    return keyword_only_plus(x, offset=x)
+
+
+@numba_node
+def expression_argument(x: Signal[int]) -> Signal[int]:
+    return plus_two(x + 1)
+
+
+OFFSET = 2
+
+
+def captured_global(value):
+    return value + OFFSET
+
+
+@numba_node
+def constant_capture(x: Signal[int]) -> Signal[int]:
+    return captured_global(x)
+
+
+def recursive(value):
+    return recursive(value)
+
+
+@numba_node
+def invalid_recursion(x: Signal[int]) -> Signal[int]:
+    return recursive(x)
+
+
+def default_argument(value, offset=1):
+    return value + offset
+
+
+@numba_node
+def invalid_default(x: Signal[int]) -> Signal[int]:
+    return default_argument(x)
+
+
+def adjust_quote(quote):
+    quote.count += 1
+    return quote.price
+
+
+@numba_node
+def method_struct_fields(quote: Signal[Quote]) -> Signal[float]:
+    return adjust_quote(quote)
+
+
+class Adjustment(enum.Enum):
+    BONUS = 3
+
+
+def add_adjustment(value):
+    return value > 0 and Adjustment.BONUS == Adjustment.BONUS
+
+
+@numba_node
+def method_enum_literal(x: Signal[int]) -> Signal[bool]:
+    return add_adjustment(x)
+
+
+def test_scalar_state_and_python_callable():
+    assert advance(2, 3) == 6
+    assert numba_method(advance) is advance
+    node = CompiledNode(compile_function(accumulate_with_method), input_types=[int]).start()
+    assert node.execute([2])[0] == 3
+    assert node.execute([4])[0] == 8
+
+
+def test_explicit_mutable_state():
+    node = CompiledNode(compile_function(method_mutates_list), input_types=[int]).start()
+    assert node.execute([10])[0] == 1
+    assert node.execute([20])[0] == 2
+
+
+def test_native_struct_and_enum_types():
+    result = _compile(method_struct_fields, TypedQuoteType)
+    source = Quote(12.5, 3)
+    output = ctypes.c_double()
+    assert _execute(result, source, output)
+    assert source.count == 4
+    assert output.value == 12.5
+
+    register_enum_family(Adjustment, abi_values={"BONUS": 3})
+    node = CompiledNode(compile_function(method_enum_literal), input_types=[int]).start()
+    assert node.execute([4])[0] is True
+
+
+def test_nested_and_module_calls_change_semantic_key():
+    nested = CompiledNode(compile_function(nested_method), input_types=[int]).start()
+    assert nested.execute([5])[0] == 7
+    original = compile_function(module_method)
+    assert CompiledNode(original, input_types=[int]).start().execute([5])[0] == 7
+    METHOD_MODULE.apply = plus_three
+    try:
+        changed = compile_function(module_method)
+    finally:
+        METHOD_MODULE.apply = plus_two
+    assert changed.semantic_key != original.semantic_key
+    assert CompiledNode(changed, input_types=[int]).start().execute([5])[0] == 8
+    METHOD_MODULE.apply = plus_two_without_inline
+    try:
+        no_inline = compile_function(module_method)
+    finally:
+        METHOD_MODULE.apply = plus_two
+    assert no_inline.semantic_key != original.semantic_key
+    assert CompiledNode(no_inline, input_types=[int]).start().execute([5])[0] == 7
+
+
+def test_repeated_helper_is_lowered_once_but_each_call_is_validated(monkeypatch):
+    original = numba_methods._function_ast
+    lowered = []
+
+    def record_lowering(helper):
+        lowered.append(helper)
+        return original(helper)
+
+    monkeypatch.setattr(numba_methods, "_function_ast", record_lowering)
+    result = compile_function(repeated_method)
+    assert lowered == [plus_two]
+    node = CompiledNode(result, input_types=[int, float]).start()
+    assert node.execute([3, 1.5])[0] == 8.5
+
+    result = compile_function(second_expression_call)
+    assert CompiledNode(result, input_types=[int]).start().execute([3])[0] == 11
+
+
+def test_call_globals_and_closure_helpers_change_semantic_key():
+    injected_two = compile_function(injected_method, call_globals={"INJECTED_METHOD": plus_two})
+    injected_three = compile_function(injected_method, call_globals={"INJECTED_METHOD": plus_three})
+    assert injected_two.semantic_key != injected_three.semantic_key
+    assert CompiledNode(injected_two, input_types=[int]).start().execute([5])[0] == 7
+    assert CompiledNode(injected_three, input_types=[int]).start().execute([5])[0] == 8
+
+    closure_two = compile_function(closure_method(plus_two))
+    closure_three = compile_function(closure_method(plus_three))
+    assert closure_two.semantic_key != closure_three.semantic_key
+    assert CompiledNode(closure_two, input_types=[int]).start().execute([5])[0] == 7
+    assert CompiledNode(closure_three, input_types=[int]).start().execute([5])[0] == 8
+
+
+def test_keyword_calls_reject_keyword_only_helper_parameters():
+    node = CompiledNode(compile_function(keyword_argument_method), input_types=[int]).start()
+    assert node.execute([5])[0] == 7
+    with pytest.raises(TypeError, match="keyword_only_plus.*keyword-only parameters \\(offset\\); Numba cannot call"):
+        compile_function(keyword_only_method)
+
+
+def test_invalid_calls():
+    with pytest.raises(TypeError, match="Recursive compiled helper"):
+        compile_function(invalid_recursion)
+    with pytest.raises(TypeError, match="cannot declare default arguments"):
+        compile_function(invalid_default)
+    with pytest.raises(TypeError, match="force_inline must be a bool"):
+        numba_method(force_inline=1)
+
+
+def module_math(value):
+    floor = math.floor(value)
+    return floor + math.pi
+
+
+@numba_node
+def module_math_node(x: Signal[float]) -> Signal[float]:
+    return module_math(x * 1.0)
+
+
+def test_helper_modules_and_attribute_names():
+    node = CompiledNode(compile_function(module_math_node), input_types=[float]).start()
+    assert node.execute([2.9])[0] == 2 + math.pi
+
+
+def test_helper_constants_change_semantic_key(monkeypatch):
+    before = compile_function(constant_capture)
+    monkeypatch.setitem(globals(), "OFFSET", 8)
+    after = compile_function(constant_capture)
+    assert before.semantic_key != after.semantic_key
+    assert CompiledNode(before, input_types=[int]).start().execute([3])[0] == 5
+    assert CompiledNode(after, input_types=[int]).start().execute([3])[0] == 11
+
+
+def test_helper_closure_constants_and_namespace_isolation():
+    OFFSET = 13
+
+    def offset(value):
+        return value + OFFSET
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return offset(x + 1)
+
+    result = compile_function(node)
+    assert CompiledNode(result, input_types=[int]).start().execute([2])[0] == 16
+
+
+def test_helper_expression_evaluation_order_and_short_circuit():
+    def push(values, value):
+        values.append(value)
+        return len(values)
+
+    def combine(first, second):
+        return first * 10 + second
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        values: State[NumbaList] = create_new_list(int)
+        return combine(push(values, x + 1), second=push(values, x + 2)) if x > 0 else len(values)
+
+    compiled = CompiledNode(compile_function(node), input_types=[int]).start()
+    try:
+        assert [compiled.execute([value])[0] for value in (0, 1, 0, 1)] == [0, 12, 2, 34]
+    finally:
+        compiled.stop()
+
+
+def test_helper_rejects_mutable_capture():
+    values = [1]
+
+    def lookup(value):
+        return values[value]
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return lookup(x)
+
+    with pytest.raises(TypeError, match="captures 'values' \\(list\\)"):
+        compile_function(node)
+
+
+def test_optional_decorator_preserves_default_semantics():
+    def helper(value):
+        return value + 2
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return helper(x)
+
+    automatic = compile_function(node)
+    assert helper(3) == 5
+    assert not vars(helper)
+    numba_method(helper)
+    explicit = compile_function(node)
+    assert automatic.semantic_key == explicit.semantic_key
+    assert CompiledNode(automatic, input_types=[int]).start().execute([3])[0] == 5
+    assert CompiledNode(explicit, input_types=[int]).start().execute([3])[0] == 5
+
+
+def test_transitive_undecorated_helper_changes_semantic_key(monkeypatch):
+    def replacement(value):
+        return value + 9
+
+    before = compile_function(nested_method)
+    monkeypatch.setitem(globals(), "plus_two", replacement)
+    after = compile_function(nested_method)
+    assert before.semantic_key != after.semantic_key
+    assert CompiledNode(before, input_types=[int]).start().execute([3])[0] == 5
+    assert CompiledNode(after, input_types=[int]).start().execute([3])[0] == 12
+
+
+@pytest.mark.parametrize("registration", ["jitable", "overload", "njit"])
+def test_existing_numba_functions_are_not_lowered(registration):
+    def function(value, offset=2):
+        return value + offset
+
+    if registration == "jitable":
+        function = register_jitable(function)
+    elif registration == "njit":
+        function = njit(function)
+    else:
+
+        @overload(function)
+        def function_overload(value, offset=2):
+            def implementation(value, offset=2):
+                return value + offset + 10
+
+            return implementation
+
+    def helper(value):
+        return function(value)
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return helper(x) + function(x)
+
+    result = compile_function(node, call_globals={"function": function})
+    expected = 30 if registration == "overload" else 10
+    assert CompiledNode(result, input_types=[int]).start().execute([3])[0] == expected
+
+
+def test_explicit_decorator_overrides_existing_numba_registration():
+    def helper(value):
+        return value + 2
+
+    @overload(helper)
+    def helper_overload(value):
+        def implementation(value):
+            return value + 10
+
+        return implementation
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return helper(x)
+
+    automatic = compile_function(node, call_globals={"helper": helper})
+    numba_method(helper)
+    explicit = compile_function(node, call_globals={"helper": helper})
+    assert automatic.semantic_key != explicit.semantic_key
+    assert CompiledNode(automatic, input_types=[int]).start().execute([3])[0] == 13
+    assert CompiledNode(explicit, input_types=[int]).start().execute([3])[0] == 5
+
+
+def test_numpy_calls_are_preserved_on_first_compilation():
+    # A fresh process catches accidentally treating lazily registered NumPy
+    # functions as helpers before Numba has loaded its library overloads.
+    result = subprocess.run(
+        [sys.executable, "-c", "from tests.test_numba_methods import _check_numpy_calls; _check_numpy_calls()"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _check_numpy_calls():
+    from numpy import round as numpy_round
+
+    def helper(value):
+        return numpy_round(value + 0.6)
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[float]:
+        return helper(x + 0) + np.round(x + 0.6)
+
+    result = compile_function(node, call_globals={"np": np})
+    assert CompiledNode(result, input_types=[int]).start().execute([3])[0] == 8.0
+
+
+def test_undecorated_helper_requires_source():
+    namespace = {}
+    exec("def helper(value): return value + 1", namespace)  # noqa: S102 - deliberately unavailable source
+    helper = namespace["helper"]
+
+    @numba_node
+    def node(x: Signal[int]) -> Signal[int]:
+        return helper(x)
+
+    with pytest.raises(TypeError, match="Unable to inspect function 'helper'"):
+        compile_function(node)

@@ -68,6 +68,29 @@ Enum and enumset ABI layouts come from the registered enum family and host type 
 
 `NumbaList` and `NumbaDict` constant parameters are read-only in compiled callbacks. Mutating methods and item assignment fail during compilation, including through aliases and helper calls. The compiler allocates each constant container once per node instance during START, reuses it during EXECUTE, and frees it during STOP. Hosts must allocate the full `state_values` array, including the hidden slots in `constant_container_indices`, and call START once before EXECUTE and STOP once when the instance ends. `State[NumbaList]` and `State[NumbaDict]` remain mutable.
 
+## Numba Methods
+
+Ordinary Python helper functions are compiled automatically when called by a compiled node:
+
+```python
+from numba_cfunc_compiler.api import State
+
+def ema_step(previous, value, alpha):
+    return alpha * value + (1.0 - alpha) * previous
+
+@numba_node
+def ema(value: Signal[float], alpha: float) -> Signal[float]:
+    previous: State[float] = 0.0
+    previous = ema_step(previous, value, alpha)
+    return previous
+```
+
+Helpers remain ordinary Python functions outside compiled nodes. Pass node values and state explicitly; return scalar state updates and assign them in the node. Mutable list and dict state can be changed through arguments. Helper calls accept variables and expressions, and can call other helpers, including imported and module-qualified functions. Their bodies use the active compilation context's AST handlers and native types.
+
+Inlining is requested by default. The optional `numba_method` decorator, imported from `numba_cfunc_compiler.api`, remains supported; use `@numba_method(force_inline=False)` to disable that request. Functions already recognized by Numba, such as supported NumPy functions, `@njit` functions, and functions registered with `@register_jitable` or `@overload`, retain their existing Numba behavior unless explicitly marked with `@numba_method`.
+
+Automatically compiled helpers require inspectable Python source. Bound instance methods and dynamically selected local callables are not automatically compiled. Helpers cannot declare `State`, emit node outputs, use recursion, default arguments, keyword-only parameters or nested scopes, or capture mutable runtime globals and closure data. Supply runtime values as arguments; supported immutable constants can be captured and contribute to the compiled semantic key along with each helper body and inline setting.
+
 ______________________________________________________________________
 
 ## Extension API

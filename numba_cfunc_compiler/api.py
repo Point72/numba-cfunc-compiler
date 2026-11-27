@@ -2,6 +2,8 @@
 
 from typing import Any, Generic, TypeVar
 
+from numba_cfunc_compiler.numba_methods import numba_method
+
 __all__ = [
     "NumbaArray",
     "NumbaDict",
@@ -10,6 +12,7 @@ __all__ = [
     "create_new_array",
     "create_new_dict",
     "create_new_list",
+    "numba_method",
     "set_output",
 ]
 
