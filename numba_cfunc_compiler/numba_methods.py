@@ -250,7 +250,7 @@ class NumbaMethodManager:
             exec(compile(tree, definition.helper.__code__.co_filename, "exec"), namespace)  # noqa: S102 - lowered helper source
             name = definition.node.name
             inline = "always" if definition.options.force_inline else "never"
-            bindings[name] = register_jitable(inline=inline)(namespace[name])
+            bindings[name] = register_jitable(inline=inline, error_model="numpy")(namespace[name])
             namespaces.append(namespace)
         for namespace in namespaces:
             namespace.update(bindings)

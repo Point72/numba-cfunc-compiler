@@ -127,12 +127,12 @@ def ffi_tagged_from_voidptr(ref_type: FFITaggedRefType):
         def codegen(context, builder, signature, args):
             result = context.make_helper(builder, ref_type)
             result.pointer = args[0]
-            if len(ref_type.cases) < 1 << args[1].type.width:
-                invalid = builder.icmp_unsigned(">=", args[1], ir.Constant(args[1].type, len(ref_type.cases)))
-                with builder.if_then(invalid):
-                    trap = declare_symbol(builder, "llvm.trap", ir.FunctionType(ir.VoidType(), ()))
-                    builder.call(trap, ())
-                    builder.unreachable()
+            wide_tag = context.cast(builder, args[1], tag, types.int64)
+            invalid = builder.icmp_unsigned(">=", wide_tag, ir.Constant(wide_tag.type, len(ref_type.cases)))
+            with builder.if_then(invalid, likely=False):
+                from numba_cfunc_compiler.core.errors import CallbackStatus, return_checked_error
+
+                return_checked_error(context, builder, CallbackStatus.INVALID_TAG, "Invalid FFI reference tag")
             result.tag = context.cast(builder, args[1], tag, types.int32)
             return result._getvalue()
 
@@ -210,6 +210,10 @@ def lower_ffi_range_iternext(context, builder, sig, args, result):
     valid = builder.icmp_unsigned("!=", current, iterator.end)
     result.set_valid(valid)
     with builder.if_then(valid):
+        from numba_cfunc_compiler.core.errors import CallbackStatus, return_checked_error
+
+        with builder.if_then(builder.icmp_unsigned("==", current, ir.Constant(current.type, None)), likely=False):
+            return_checked_error(context, builder, CallbackStatus.NULL_REF, "Null FFI iterator element")
         result.yield_(current)
         next_symbol = sig.args[0].parent.next_symbol
         native_sig = ir.FunctionType(ir.IntType(8).as_pointer(), [ir.IntType(8).as_pointer()])

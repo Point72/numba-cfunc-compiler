@@ -22,10 +22,12 @@ class CompilationOptions:
 
     fastmath:        enable fast-math in @cfunc.
     force_inline:    replace noinline → alwaysinline on the cfunc wrapper.
+    strict_exceptions: require proof that the callback cannot return EXCEPTION.
     """
 
     fastmath: bool = False
     force_inline: bool = False
+    strict_exceptions: bool = False
 
 
 def exported_entry_point_name(semantic_key: str) -> str:
@@ -51,6 +53,17 @@ def apply_post_compilation(
     # the graph module's optimization pipeline.
     LLVMIRHelper.internalize_defined_functions(module, preserve_symbols={exported_entry_point})
     module.verify()
+    forbidden = [
+        symbol.name
+        for symbol in (*module.functions, *module.global_variables)
+        if symbol.is_declaration and symbol.name.startswith(("Py", "numba_gil_", "numba_do_raise", "numba_runtime_build_excinfo", "numba_unpickle"))
+    ]
+    if forbidden:
+        raise ValueError(f"Callback requires unsupported Python exception runtime: {', '.join(sorted(forbidden))}")
+    if opts.strict_exceptions:
+        possible = LLVMIRHelper.return_constants(module.get_function(exported_entry_point))
+        if possible is None or not possible <= {0, 1, 2, 3}:
+            raise ValueError("strict_exceptions could not prove the absence of reachable exception paths")
 
     return str(module), exported_entry_point
 

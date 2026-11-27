@@ -10,7 +10,7 @@ from numba.core.imputils import RefType, impl_ret_borrowed, iternext_impl
 from numba.extending import intrinsic, lower_builtin, overload, overload_method, register_model
 
 from numba_cfunc_compiler.types.native.input import payload_type_of, unwrap_source
-from numba_cfunc_compiler.types.native.llvm import get_llvm_type_for_numba_dtype, get_or_declare_function, i8ptr, i64
+from numba_cfunc_compiler.types.native.llvm import get_llvm_type_for_numba_dtype, i8ptr, i64
 from numba_cfunc_compiler.types.registry import NumbaTypeRegistry
 
 
@@ -142,7 +142,7 @@ def standalone_array_readonly(typingctx, array_ty):
     return sig, codegen
 
 
-def _element_pointer(builder, array_ptr, index, array_ty, index_ty):
+def _element_pointer(context, builder, array_ptr, index, array_ty, index_ty):
     """Return an element pointer after at most one dynamic range check."""
     if isinstance(index_ty, types.IntegerLiteral):
         position = index_ty.literal_value
@@ -162,9 +162,9 @@ def _element_pointer(builder, array_ptr, index, array_ty, index_ty):
             offset = index_i64
         valid = builder.icmp_unsigned("<", offset, ir.Constant(i64(), array_ty.length))
         with builder.if_then(builder.not_(valid)):
-            trap = get_or_declare_function(builder.module, "llvm.trap", ir.FunctionType(ir.VoidType(), []))
-            builder.call(trap, [])
-            builder.unreachable()
+            from numba_cfunc_compiler.core.errors import CallbackStatus, return_checked_error
+
+            return_checked_error(context, builder, CallbackStatus.INDEX_OOB, "NumbaArray index out of range")
 
     item_ty = get_llvm_type_for_numba_dtype(array_ty.dtype)
     typed_ptr = builder.bitcast(array_ptr, item_ty.as_pointer())
@@ -180,7 +180,7 @@ def standalone_array_getitem(typingctx, array_ty, index_ty):
     sig = array_ty.dtype(array_ty, index_ty)
 
     def codegen(context, builder, signature, args):
-        ptr = _element_pointer(builder, args[0], args[1], array_ty, index_ty)
+        ptr = _element_pointer(context, builder, args[0], args[1], array_ty, index_ty)
         return builder.load(ptr)
 
     return sig, codegen
@@ -197,7 +197,7 @@ def standalone_array_setitem(typingctx, array_ty, index_ty, value_ty):
     sig = types.void(array_ty, index_ty, value_ty)
 
     def codegen(context, builder, signature, args):
-        ptr = _element_pointer(builder, args[0], args[1], array_ty, index_ty)
+        ptr = _element_pointer(context, builder, args[0], args[1], array_ty, index_ty)
         value = context.cast(builder, args[2], value_ty, array_ty.dtype)
         builder.store(value, ptr)
         return context.get_dummy_value()

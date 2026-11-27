@@ -10,11 +10,11 @@
 #include <math.h>
 
 /* cfunc signature:
- *   void (*)(void** outputs, int8_t* output_ticked,
+ *   int32_t (*)(void** outputs, int8_t* output_ticked,
  *            void** state, int8_t lifecycle_phase,
  *            void** inputs, int8_t* input_ticked, int8_t* input_valid)
  */
-typedef void (*numba_cfunc_t)(void**, int8_t*, void**, int8_t, void**, int8_t*, int8_t*);
+typedef int32_t (*numba_cfunc_t)(void**, int8_t*, void**, int8_t, void**, int8_t*, int8_t*);
 
 typedef enum {
   LIFECYCLE_EXECUTE = 0,
@@ -73,14 +73,14 @@ void node_set_double(NumbaNode* n, int idx, double val) { *(double*)&n->input_st
 void node_set_bool(NumbaNode* n, int idx, int8_t val) { *(int8_t*)&n->input_storage[idx] = val; }
 void node_set_state(NumbaNode* n, int idx, int64_t val) { n->state_storage[idx] = val; }
 
-void node_start(NumbaNode* n) {
-  n->func(n->outputs, n->out_ticked, n->state, LIFECYCLE_START, n->inputs, n->ticked, n->valid);
+int32_t node_start(NumbaNode* n) {
+  return n->func(n->outputs, n->out_ticked, n->state, LIFECYCLE_START, n->inputs, n->ticked, n->valid);
 }
 
-void node_execute(NumbaNode* n) {
+int32_t node_execute(NumbaNode* n) {
   for(int i = 0; i < n->n_outputs; i++)
     n->out_ticked[i] = 0;
-  n->func(n->outputs, n->out_ticked, n->state, LIFECYCLE_EXECUTE, n->inputs, n->ticked, n->valid);
+  return n->func(n->outputs, n->out_ticked, n->state, LIFECYCLE_EXECUTE, n->inputs, n->ticked, n->valid);
 }
 
 int64_t node_get_int(NumbaNode* n, int idx) { return n->output_storage[idx]; }
@@ -150,17 +150,17 @@ static void test_add_ints(void* fp) {
 
   node_set_int(&n, 0, 10);
   node_set_int(&n, 1, 20);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 30, "10 + 20");
 
   node_set_int(&n, 0, -5);
   node_set_int(&n, 1, 5);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 0, "-5 + 5");
 
   node_set_int(&n, 0, 1000000);
   node_set_int(&n, 1, 2000000);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 3000000, "1M + 2M");
 }
 
@@ -170,7 +170,7 @@ static void test_add_floats(void* fp) {
 
   node_set_double(&n, 0, 1.5);
   node_set_double(&n, 1, 2.5);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_DOUBLE_EQ(node_get_double(&n, 0), 4.0, "1.5 + 2.5");
 }
 
@@ -179,11 +179,11 @@ static void test_multiply_constant(void* fp) {
   node_init(&n, fp, 1, 1, 0);
 
   node_set_int(&n, 0, 7);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 21, "7 * 3");
 
   node_set_int(&n, 0, -4);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), -12, "-4 * 3");
 }
 
@@ -192,11 +192,11 @@ static void test_conditional(void* fp) {
   node_init(&n, fp, 1, 1, 0);
 
   node_set_int(&n, 0, 5);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_FALSE(node_was_ticked(&n, 0), "5 < 10 should not tick");
 
   node_set_int(&n, 0, 15);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_TRUE(node_was_ticked(&n, 0), "15 > 10 should tick");
   ASSERT_INT_EQ(node_get_int(&n, 0), 15, "output = 15");
 }
@@ -207,11 +207,11 @@ static void test_bool_signal(void* fp) {
 
   node_set_int(&n, 0, 42);
   node_set_bool(&n, 1, 1);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), -42, "negate(42, true)");
 
   node_set_bool(&n, 1, 0);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 42, "negate(42, false)");
 }
 
@@ -219,18 +219,18 @@ static void test_stateful_accumulator(void* fp) {
   NumbaNode n;
   node_init(&n, fp, 1, 1, 1);
   node_set_state(&n, 0, 0);
-  node_start(&n);
+  ASSERT_INT_EQ(node_start(&n), 0, "START status");
 
   node_set_int(&n, 0, 10);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 10, "acc after 10");
 
   node_set_int(&n, 0, 5);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 15, "acc after 10+5");
 
   node_set_int(&n, 0, 25);
-  node_execute(&n);
+  ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   ASSERT_INT_EQ(node_get_int(&n, 0), 40, "acc after 10+5+25");
 }
 
@@ -238,12 +238,12 @@ static void test_ema_benchmark(void* fp) {
   NumbaNode n;
   node_init(&n, fp, 1, 1, 1);
   node_set_state(&n, 0, 0);
-  node_start(&n);
+  ASSERT_INT_EQ(node_start(&n), 0, "START status");
 
   int N = 100000;
   for(int i = 0; i < N; i++) {
     node_set_double(&n, 0, (double)i);
-    node_execute(&n);
+    ASSERT_INT_EQ(node_execute(&n), 0, "EXECUTE status");
   }
 
   /* verify against reference */

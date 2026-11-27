@@ -1,5 +1,6 @@
 """LLVM IR utilities used after Numba compilation."""
 
+import operator
 import re
 
 from llvmlite import binding as llvm
@@ -11,6 +12,67 @@ class LLVMIRHelper:
     """Use parsed LLVM values for symbols and linkage, with scoped attribute edits."""
 
     _ATTRIBUTE_REF_FOLLOW = r"(?=[ \t]*(?:\{|$|!|,|section\b|comdat\b|align\b|gc\b|prefix\b|prologue\b|personality\b|to\b))"
+
+    @staticmethod
+    def return_constants(function) -> set[int] | None:
+        """Conservatively bound an optimized function's integer return values.
+
+        Unknown instructions and cyclic data flow fail the proof, rather than
+        accepting an exception path that we cannot analyze. This is independent
+        of Numba's mangled names and exception serialization format.
+        """
+        instructions = {instruction: instruction for block in function.blocks for instruction in block.instructions}
+        active = set()
+        binary = {"add": operator.add, "sub": operator.sub, "mul": operator.mul, "and": operator.and_, "or": operator.or_, "xor": operator.xor}
+
+        def union(values):
+            values = list(values)
+            if any(value is None for value in values):
+                return None
+            result = set().union(*values)
+            return result if len(result) <= 32 else None
+
+        def resolve(value):
+            if value.is_constant:
+                try:
+                    return {int(value.get_constant_value())}
+                except (TypeError, ValueError):
+                    return None
+            instruction = instructions.get(value)
+            if instruction is None or value in active:
+                return None
+            active.add(value)
+            try:
+                operands = list(instruction.operands)
+                operation = instruction.opcode
+                if operation in ("icmp", "fcmp"):
+                    return {0, 1}
+                if operation == "phi":
+                    return union(resolve(operand) for operand in operands)
+                if operation == "select":
+                    return union(resolve(operand) for operand in operands[1:])
+                if operation in ("zext", "sext", "trunc"):
+                    values = resolve(operands[0])
+                    # Status values are small nonnegative integers. Reject casts
+                    # whose truncation/sign extension would change those values.
+                    bits = min(operands[0].type.type_width, instruction.type.type_width)
+                    if values is not None and all(0 <= item < (1 << (bits if operation == "zext" else bits - 1)) for item in values):
+                        return values
+                if operation in binary:
+                    left, right = (resolve(operand) for operand in operands)
+                    if left is not None and right is not None:
+                        bits = instruction.type.type_width
+                        return union({binary[operation](a, b) % (1 << bits)} for a in left for b in right)
+                return None
+            finally:
+                active.remove(value)
+
+        return union(
+            resolve(next(iter(instruction.operands)))
+            for block in function.blocks
+            for instruction in block.instructions
+            if instruction.opcode == "ret"
+        )
 
     @staticmethod
     def force_inline(llvm_ir_text: str) -> str:

@@ -15,7 +15,7 @@ from numba_cfunc_compiler.types.native.ffi import (
 )
 from numba_cfunc_compiler.types.native.input import InputValueType, input_payload, unwrap_source_args
 
-# (reference type, method name) -> (symbols in case order, return type, argument types)
+# (reference type, method name) -> (symbols, return type, argument types, allow_null)
 _METHODS = {}
 _ITERATORS = {}
 _INSTALLED_METHOD_OVERLOADS = set()
@@ -74,6 +74,14 @@ def _method_signature(context, return_type, arg_types):
     return ir.FunctionType(_llvm_type(context, return_type), [ir.IntType(8).as_pointer(), *[_llvm_type(context, typ) for typ in arg_types]])
 
 
+def _check_receiver(context, builder, pointer, allow_null):
+    if not allow_null:
+        from numba_cfunc_compiler.core.errors import CallbackStatus, return_checked_error
+
+        with builder.if_then(builder.icmp_unsigned("==", pointer, ir.Constant(pointer.type, None)), likely=False):
+            return_checked_error(context, builder, CallbackStatus.NULL_REF, "Null FFI receiver")
+
+
 def _check_method_args(ref_type, name, receiver, args_tuple, arg_types):
     actual = tuple(args_tuple) if isinstance(args_tuple, types.BaseTuple) else None
     if receiver != ref_type or actual != arg_types:
@@ -114,7 +122,7 @@ def _install_method_overload(owner_type, name, intrinsic_for):
 
 @cache
 def _ref_call_intrinsic(ref_type, name):
-    symbols, return_type, arg_types = _METHODS[(ref_type, name)]
+    symbols, return_type, arg_types, allow_null = _METHODS[(ref_type, name)]
     symbol = symbols[0]
 
     @intrinsic
@@ -123,6 +131,7 @@ def _ref_call_intrinsic(ref_type, name):
         sig = return_type(receiver, args_tuple)
 
         def codegen(context, builder, signature, values):
+            _check_receiver(context, builder, values[0], allow_null)
             native_sig = _method_signature(context, return_type, arg_types)
             function = declare_symbol(builder, symbol, native_sig)
             native_args = [values[0], *(builder.extract_value(values[1], idx) for idx in range(len(arg_types)))]
@@ -133,11 +142,13 @@ def _ref_call_intrinsic(ref_type, name):
     return call_native
 
 
-def register_ffi_method(ref_type: FFIRefType, name: str, symbol: str, return_type: types.Type, arg_types: tuple[types.Type, ...] = ()):
+def register_ffi_method(
+    ref_type: FFIRefType, name: str, symbol: str, return_type: types.Type, arg_types: tuple[types.Type, ...] = (), *, allow_null: bool = False
+):
     """Install a Numba method that calls one immutable native symbol."""
-    if not isinstance(ref_type, FFIRefType) or not name.isidentifier() or not symbol:
+    if not isinstance(ref_type, FFIRefType) or not name.isidentifier() or not symbol or not isinstance(allow_null, bool):
         raise ValueError("Invalid FFI method registration")
-    if not _register_method_spec(ref_type, name, ((symbol,), return_type, arg_types)):
+    if not _register_method_spec(ref_type, name, ((symbol,), return_type, arg_types, allow_null)):
         return
     if not _install_method_overload(FFIRefType, name, _ref_call_intrinsic):
         return
@@ -156,7 +167,7 @@ def register_ffi_method(ref_type: FFIRefType, name: str, symbol: str, return_typ
 
 @cache
 def _tagged_call_intrinsic(ref_type, name):
-    symbols, return_type, arg_types = _METHODS[(ref_type, name)]
+    symbols, return_type, arg_types, allow_null = _METHODS[(ref_type, name)]
 
     @intrinsic
     def call_native(typingctx, receiver, args_tuple):
@@ -165,6 +176,7 @@ def _tagged_call_intrinsic(ref_type, name):
 
         def codegen(context, builder, signature, values):
             reference = context.make_helper(builder, ref_type, value=values[0])
+            _check_receiver(context, builder, reference.pointer, allow_null)
             native_sig = _method_signature(context, return_type, arg_types)
             functions = [declare_symbol(builder, symbol, native_sig) for symbol in symbols]
             native_args = [reference.pointer, *(builder.extract_value(values[1], idx) for idx in range(len(arg_types)))]
@@ -182,8 +194,9 @@ def _tagged_call_intrinsic(ref_type, name):
                     builder.store(called, result)
                 builder.branch(done)
             builder.position_at_end(failure)
-            builder.call(declare_symbol(builder, "llvm.trap", ir.FunctionType(ir.VoidType(), ())), ())
-            builder.unreachable()
+            from numba_cfunc_compiler.core.errors import CallbackStatus, return_checked_error
+
+            return_checked_error(context, builder, CallbackStatus.INVALID_TAG, "Invalid FFI dispatch tag")
             builder.position_at_end(done)
             return context.get_dummy_value() if result is None else builder.load(result)
 
@@ -213,10 +226,14 @@ def register_ffi_tagged_method(
     symbols: dict[str, str],
     return_type: types.Type,
     arg_types: tuple[types.Type, ...] = (),
+    *,
+    allow_null: bool = False,
 ):
     """Dispatch a method by the case tag carried with a borrowed pointer."""
     ordered_symbols = _validate_tagged_method(ref_type, name, symbols, return_type, arg_types)
-    if not _register_method_spec(ref_type, name, (ordered_symbols, return_type, arg_types)):
+    if not isinstance(allow_null, bool):
+        raise TypeError("allow_null must be a bool")
+    if not _register_method_spec(ref_type, name, (ordered_symbols, return_type, arg_types, allow_null)):
         return
     _install_method_overload(FFITaggedRefType, name, _tagged_call_intrinsic)
 

@@ -235,8 +235,13 @@ ComponentRegistry.register(MyComponent())
 With only the built-in components registered, the generated cfunc signature starts with:
 
 ```c
-void (*)(void** outputs, int8_t* output_ticked, void** state, int8_t lifecycle_phase, ...)
+int32_t (*)(void** outputs, int8_t* output_ticked, void** state, int8_t lifecycle_phase, ...)
 ```
+
+Every callback returns a status: zero means success; nonzero identifies an error.
+Node values are written through the output pointers. Hosts must check the status
+before publishing outputs. See [Native callback status](docs/CALLBACK_STATUS.md)
+for error codes, helper propagation, and failure handling.
 
 Anything after that prefix is determined by additional components you register. Component orders must be unique; duplicate orders are rejected during registration.
 

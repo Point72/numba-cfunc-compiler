@@ -300,7 +300,7 @@ def test_ffi_iterators(bind_ffi_symbol):
     fingerprint = ffi_binding_fingerprint(owner_type)
     assert any(entry[:3] == (owner_type.name, "iterator", "items") for entry in fingerprint)
     assert any(entry[:3] == (item_type.name, "method", "value") for entry in fingerprint)
-    assert any(entry[1:4] == ("method", "value", (("ncc_direct_value",), types.int64.name, ())) for entry in fingerprint)
+    assert any(entry[1:4] == ("method", "value", (("ncc_direct_value",), types.int64.name, (), False)) for entry in fingerprint)
     wrap_owner = ffi_ref_from_voidptr(owner_type)
 
     @cfunc(types.void(types.voidptr, types.CPointer(types.int64)), _nrt=False)
@@ -311,7 +311,7 @@ def test_ffi_iterators(bind_ffi_symbol):
         output[0] = total
 
     output = ctypes.c_int64()
-    callback.ctypes(None, ctypes.pointer(output))
+    callback.ctypes(1, ctypes.pointer(output))
     assert output.value == 3
 
 
@@ -348,8 +348,8 @@ def test_tagged_ffi_methods_and_fingerprint(bind_ffi_symbol):
         reference = wrap(raw, tag)
         return reference.score(value) + reference.shared(value)
 
-    assert [callback.ctypes(None, tag, 5) for tag in range(3)] == [16, 25, 115]
-    assert "llvm.trap" in callback.inspect_llvm()
+    assert [callback.ctypes(1, tag, 5) for tag in range(3)] == [16, 25, 115]
+    assert "llvm.trap" not in callback.inspect_llvm()
 
     low_tag = ref_type.tag("low")
     high_tag = ref_type.tag("high")
@@ -362,8 +362,8 @@ def test_tagged_ffi_methods_and_fingerprint(bind_ffi_symbol):
             reference = wrap(raw, high_tag)
         return reference.score(5)
 
-    assert select_case.ctypes(None, True) == 6
-    assert select_case.ctypes(None, False) == 105
+    assert select_case.ctypes(1, True) == 6
+    assert select_case.ctypes(1, False) == 105
 
     @njit
     def bad_literal(raw):
@@ -391,7 +391,7 @@ def test_tagged_ffi_methods_and_fingerprint(bind_ffi_symbol):
     def reordered_score(raw):
         return wrap_reordered(raw, 0).score(5)
 
-    assert reordered_score.ctypes(None) == 105
+    assert reordered_score.ctypes(1) == 105
     changed = ffi_tagged_ref_type("TaggedScoreChanged", ref_type.cases)
     register_ffi_tagged_method(changed, "score", {**score, "high": "ncc_tag_low"}, types.int64, (types.int64,))
 

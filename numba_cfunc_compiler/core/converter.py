@@ -163,6 +163,7 @@ class NumbaASTConverter(ast.NodeTransformer):
         lifecycle_body.append(exec_if)
 
         node.body = materialized.setup + lifecycle_body
+        node.body.append(ast.Return(value=ast.Constant(0)))
         node.returns = None
 
         ast.fix_missing_locations(node)
@@ -171,7 +172,7 @@ class NumbaASTConverter(ast.NodeTransformer):
     @with_handlers("Return")
     def visit_Return(self, node):
         if not node.value:
-            return node
+            return ast.copy_location(ast.Return(value=ast.Constant(0)), node)
 
         statements = []
 
@@ -191,8 +192,8 @@ class NumbaASTConverter(ast.NodeTransformer):
             statements.append(output_var.write(value))
             statements.append(output_var.tick())
 
-        # Add a void return at the end
-        statements.append(ast.Return(value=None))
+        # Output values travel through pointers; the C return reports success.
+        statements.append(ast.Return(value=ast.Constant(0)))
         return statements
 
     @with_handlers("Call")

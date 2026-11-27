@@ -16,7 +16,7 @@ Usage:
     func_ptr = result.compiled_func.address   # raw C function pointer (int)
 
 The compiled function has the C signature:
-    void (*)(void** outputs, int8_t* output_ticked,
+    int32_t (*)(void** outputs, int8_t* output_ticked,
              void** state, int8_t lifecycle_phase,
              void** inputs, int8_t* input_ticked, int8_t* input_valid)
 """
@@ -187,7 +187,7 @@ def setup_standalone_context() -> CompilationContext:
     return _standalone_ctx
 
 
-def compile_function(func, *, call_globals=None, start_body=None, stop_body=None, **constants) -> CompilationResult:
+def compile_function(func, *, call_globals=None, start_body=None, stop_body=None, options=None, **constants) -> CompilationResult:
     """Compile a @numba_node function and return the result.
 
     Args:
@@ -236,6 +236,7 @@ def compile_function(func, *, call_globals=None, start_body=None, stop_body=None
             call_globals=call_globals,
             start_body=start_body,
             stop_body=stop_body,
+            options=options,
         )
 
 
@@ -248,7 +249,7 @@ def compile_function(func, *, call_globals=None, start_body=None, stop_body=None
 # export, ABI/type-width mismatches in the dict/list runtime) surface here.
 #
 # cfunc signature (see cfunc_caller.c):
-#   void (*)(void** outputs, int8_t* output_ticked,
+#   int32_t (*)(void** outputs, int8_t* output_ticked,
 #            void** state, int8_t lifecycle_phase,
 #            void** inputs, int8_t* input_ticked, int8_t* input_valid)
 # ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ LIFECYCLE_START = 1
 LIFECYCLE_STOP = 2
 
 CFUNC_T = ctypes.CFUNCTYPE(
-    None,  # void
+    ctypes.c_int32,  # CallbackStatus
     ctypes.POINTER(ctypes.c_void_p),  # outputs
     ctypes.POINTER(ctypes.c_int8),  # output_ticked
     ctypes.POINTER(ctypes.c_void_p),  # state
@@ -350,7 +351,7 @@ class CompiledNode:
         return int(store[idx])
 
     def _call(self, phase):
-        self._func(
+        self.status = self._func(
             self._outputs,
             self._out_ticked,
             self._state,
@@ -359,6 +360,7 @@ class CompiledNode:
             self._in_ticked,
             self._in_valid,
         )
+        assert self.status == 0, f"Callback failed in phase {phase}: status {self.status}"
 
     def start(self):
         """Run the START lifecycle phase (allocates container state). Returns self."""

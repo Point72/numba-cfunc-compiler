@@ -277,7 +277,8 @@ def standalone_dict_free(typingctx, dict_ty):
             [dict_ptr] = args
             fnty = ir.FunctionType(ir.VoidType(), [i8ptr()])
             fn = get_or_declare_function(builder.module, "numba_dict_free", fnty)
-            builder.call(fn, [dict_ptr])
+            with builder.if_then(builder.icmp_unsigned("!=", dict_ptr, ir.Constant(i8ptr(), None))):
+                builder.call(fn, [dict_ptr])
             return context.get_dummy_value()
 
         return sig, codegen
@@ -314,7 +315,9 @@ def standalone_dict_lookup(typingctx, dict_ty, key_ty):
             dict_ptr, key = args
             dt = signature.args[0]
             val_lltype = _get_llvm_type(dt.value_type)
-            _, val_ptr, _ = _call_dict_lookup(builder, dict_ptr, key, dt.key_type, val_lltype)
+            index, val_ptr, _ = _call_dict_lookup(builder, dict_ptr, key, dt.key_type, val_lltype)
+            with builder.if_then(builder.icmp_signed("<", index, ir.Constant(i64(), 0)), likely=False):
+                context.call_conv.return_user_exc(builder, KeyError, ())
             return builder.load(val_ptr)
 
         return sig, codegen

@@ -14,6 +14,7 @@ from numba.types import CPointer
 from numba_cfunc_compiler.compilation_cache import compile_cached
 from numba_cfunc_compiler.core.context import CompilationContext
 from numba_cfunc_compiler.core.converter import NumbaASTConverter
+from numba_cfunc_compiler.core.errors import STATUS_ABI_VERSION, StatusCompiler
 from numba_cfunc_compiler.core.function import NumbaFunctionInfo, validate_user_identifiers
 from numba_cfunc_compiler.core.names import (
     UNWRAP_SOURCE_NAME,
@@ -92,6 +93,7 @@ def build_semantic_key(
     *,
     force_inline: bool = False,
     frozen_globals: dict[str, str] | None = None,
+    strict_exceptions: bool = False,
 ) -> str:
     payload = {
         "new_func_code": new_func_code,
@@ -99,6 +101,7 @@ def build_semantic_key(
         "cfunc_kwargs": cfunc_kwargs,
         "force_inline": force_inline,
         "frozen_globals": frozen_globals or {},
+        "strict_exceptions": strict_exceptions,
     }
     if typed_struct_layouts:
         payload["typed_structs"] = [layout.key for _, layout in sorted(typed_struct_layouts.items())]
@@ -114,6 +117,7 @@ def build_semantic_key(
     if method_hashes:
         payload["numba_methods"] = method_hashes
     payload["compiler_pipeline"] = {
+        "revision": 10,
         "numba": numba.__version__,
         "python": sys.version_info[:2],
     }
@@ -230,7 +234,7 @@ def create_compiled_func(
     )
 
     cfunc_sig = ComponentRegistry.build_cfunc_signature()
-    cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy'"
+    cfunc_kwargs = "nopython=True, nogil=True, _nrt=False, error_model='numpy', pipeline_class=__ncc_status_compiler"
     if opts.fastmath:
         cfunc_kwargs += ", fastmath=True"
     frozen_globals = find_frozen_globals(new_tree, transformer.call_globals)
@@ -247,6 +251,7 @@ def create_compiled_func(
         method_manager.hashes,
         force_inline=opts.force_inline,
         frozen_globals=frozen_globals.constants,
+        strict_exceptions=opts.strict_exceptions,
     )
     cfunc_code = f"""
 @cfunc({cfunc_sig}, {cfunc_kwargs})
@@ -260,6 +265,7 @@ def create_compiled_func(
     exec_globals.update(
         {
             "cfunc": cfunc,
+            "__ncc_status_compiler": StatusCompiler,
             "CPointer": CPointer,
             "int64": int64,
             "int8": int8,
@@ -300,13 +306,20 @@ def create_compiled_func(
     exec_globals.update(method_manager.build_bindings(exec_globals))
 
     def compile_fresh():
-        exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
-        compiled_func = exec_globals[name]
-        result_ir, _ = apply_post_compilation(compiled_func, semantic_key, opts)
+        try:
+            exec(cfunc_code, exec_globals)  # noqa: S102 - generated function source
+            compiled_func = exec_globals[name]
+            result_ir, _ = apply_post_compilation(compiled_func, semantic_key, opts)
+        except (ValueError, numba.core.errors.NumbaError) as exc:
+            if callable(func):
+                raise type(exc)(f"{func.__qualname__} ({func.__code__.co_filename}:{func.__code__.co_firstlineno}): {exc}") from exc
+            raise
         return compiled_func, result_ir
 
     unkeyable = sorted(set(frozen_globals.unkeyable) | method_manager.unkeyable)
     compiled_func, result_ir = compile_cached(name, semantic_key, unkeyable, compile_fresh)
+
+    info.component_metadata["callback_abi_version"] = STATUS_ABI_VERSION
 
     return CompilationResult(
         compiled_func=compiled_func,

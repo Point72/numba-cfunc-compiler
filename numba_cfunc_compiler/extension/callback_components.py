@@ -132,7 +132,7 @@ class ComponentRegistry:
     def build_cfunc_signature(cls) -> str:
         params = cls.build_cfunc_params()
         param_types = ", ".join(p.numba_type for p in params)
-        return f'"void({param_types})"'
+        return f'"int32({param_types})"'
 
     @classmethod
     def build_func_args(cls) -> list[ast.arg]:

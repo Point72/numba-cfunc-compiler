@@ -247,7 +247,8 @@ def standalone_list_free(typingctx, lst_ty):
             [lst_ptr] = args
             fnty = ir.FunctionType(ir.VoidType(), [i8ptr()])
             fn = get_or_declare_function(builder.module, "numba_list_free", fnty)
-            builder.call(fn, [lst_ptr])
+            with builder.if_then(builder.icmp_unsigned("!=", lst_ptr, ir.Constant(i8ptr(), None))):
+                builder.call(fn, [lst_ptr])
             return context.get_dummy_value()
 
         return sig, codegen
